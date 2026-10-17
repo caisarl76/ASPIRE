@@ -100,3 +100,42 @@ def test_start_message_is_only_sent_on_request():
     assert f["start"].tolist() == [1] and f["stop"].tolist() == [0] and f["planner"].tolist() == [1]
     client.close()
     sub.close()
+
+
+def test_hand_step_limit_comes_from_the_profile_value():
+    port = 5740
+    sub = zmq.Context.instance().socket(zmq.SUB)
+    sub.setsockopt(zmq.LINGER, 0)
+    sub.subscribe(b"")
+    sub.connect(f"tcp://127.0.0.1:{port}")
+    client = SonicZmqBodyClient(_cfg(port), hand_max_step_rad={"left": 0.25, "right": 0.1})
+    time.sleep(0.3)
+    client.command_upper_body(np.zeros(17), np.zeros(17), np.full(7, 2.0), np.full(7, 2.0))
+    f = decode_packed(sub.recv(), b"planner")
+    assert np.allclose(f["left_hand_joints"], np.full(7, 0.25))
+    assert np.allclose(f["right_hand_joints"], np.full(7, 0.1))
+    client.seed_hands(np.full(7, 1.0), np.full(7, 1.0))
+    client.command_upper_body(np.zeros(17), np.zeros(17), np.full(7, 1.0), np.full(7, 1.05))
+    f = decode_packed(sub.recv(), b"planner")
+    assert np.allclose(f["left_hand_joints"], np.full(7, 1.0))  # seeded, so no ramp from 0.25
+    assert np.allclose(f["right_hand_joints"], np.full(7, 1.05))
+    client.close()
+    sub.close()
+
+
+def test_heading_falls_back_to_base_quat_without_a_reference():
+    q = [np.cos(0.3), 0, 0, np.sin(0.3)]
+    yaw = SonicZmqBodyClient._heading({"planner_reference_active": [1], "base_quat": q})
+    assert abs(yaw - 0.6) < 1e-6
+
+
+def test_poll_thread_survives_a_subscriber_error():
+    from unittest.mock import Mock
+
+    client = SonicZmqBodyClient(_cfg(5750))
+    real_sub = client._sub
+    client._sub = Mock(get_msg=Mock(side_effect=RuntimeError("boom")))
+    time.sleep(0.05)
+    assert client._thread.is_alive() and client.feedback_age_s() == float("inf")
+    client.close()
+    real_sub.close()

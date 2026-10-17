@@ -17,7 +17,10 @@ def build_real_station(
 ) -> G1Env:
     """Connect to SONIC. Issues no command: ``engage()`` is the operator's step."""
     cfg = load_g1_station_config(station, config_root=config_root)
-    body = SonicZmqBodyClient(cfg.sonic)  # before the camera: a failure must not leak it
+    # Before the camera: a failure must not leak it.
+    body = SonicZmqBodyClient(
+        cfg.sonic, hand_max_step_rad={side: hand.max_step_rad for side, hand in cfg.hands.items()}
+    )
     camera = (
         ComposedCameraRgbd(
             cfg.camera.host,

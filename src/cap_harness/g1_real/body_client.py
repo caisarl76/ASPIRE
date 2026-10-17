@@ -9,6 +9,8 @@ toward the last command) without a robot or a SONIC process.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+import logging
 import math
 import threading
 import time
@@ -32,9 +34,12 @@ from cap_harness.g1_real.sonic.zmq_planner_sender import (
 )
 from cap_harness.g1_real.sonic.zmq_state_subscriber import ZMQStateSubscriber
 
+#: Default per-message hand joint step; the station profile's ``hands.*.max_step_rad`` overrides it.
 HAND_STEP_RAD = 0.25
 _POLL_PERIOD_S = 0.01
 _SIDES = ("left", "right")
+
+_log = logging.getLogger(__name__)
 
 
 class G1BodyClient(Protocol):
@@ -49,6 +54,8 @@ class G1BodyClient(Protocol):
     ) -> None: ...
 
     def send_start(self) -> None: ...
+
+    def seed_hands(self, left: np.ndarray, right: np.ndarray) -> None: ...
 
     def feedback_age_s(self) -> float: ...
 
@@ -85,8 +92,21 @@ def _observation(
 class SonicZmqBodyClient:
     """PUB planner commands to SONIC and poll its ``g1_debug`` feedback at 100 Hz."""
 
-    def __init__(self, config: G1SonicConfig) -> None:
+    def __init__(
+        self,
+        config: G1SonicConfig,
+        *,
+        hand_max_step_rad: float | Mapping[str, float] = HAND_STEP_RAD,
+    ) -> None:
         self._config = config
+        self._hand_step = {
+            side: float(
+                hand_max_step_rad[side]
+                if isinstance(hand_max_step_rad, Mapping)
+                else hand_max_step_rad
+            )
+            for side in _SIDES
+        }
         self._pub = zmq.Context.instance().socket(zmq.PUB)
         self._pub.setsockopt(zmq.LINGER, 0)
         self._pub.bind(config.command_bind)
@@ -103,7 +123,13 @@ class SonicZmqBodyClient:
 
     def _poll(self) -> None:
         while not self._stop.wait(_POLL_PERIOD_S):
-            msg = self._sub.get_msg(clear=False)
+            # A dead poll thread would read as permanently stale feedback, so a
+            # bad message (or a socket hiccup) is logged and polling continues.
+            try:
+                msg = self._sub.get_msg(clear=False)
+            except Exception as exc:
+                _log.warning("feedback poll failed: %s: %s", type(exc).__name__, exc)
+                continue
             with self._lock:
                 # clear=False re-returns the last message; only a new object is new feedback,
                 # so the stamp (and hence the age) is not refreshed while SONIC is silent.
@@ -117,7 +143,11 @@ class SonicZmqBodyClient:
     @staticmethod
     def _heading(msg: dict) -> float:
         active = float(np.asarray(msg.get("planner_reference_active", 0)).reshape(-1)[0])
-        key = "reference_heading_quat" if active == 1 else "base_quat"
+        key = (
+            "reference_heading_quat"
+            if active == 1 and "reference_heading_quat" in msg
+            else "base_quat"
+        )
         return heading_yaw_from_quat_wxyz(np.asarray(msg[key]).reshape(-1))
 
     def get_observations(self) -> dict[str, np.ndarray | float] | None:
@@ -143,7 +173,8 @@ class SonicZmqBodyClient:
         if target is None:
             return None
         last = self._last_hand[side]
-        step = np.clip(np.asarray(target, dtype=np.float64) - last, -HAND_STEP_RAD, HAND_STEP_RAD)
+        limit = self._hand_step[side]
+        step = np.clip(np.asarray(target, dtype=np.float64) - last, -limit, limit)
         self._last_hand[side] = last + step
         return self._last_hand[side]
 
@@ -173,6 +204,11 @@ class SonicZmqBodyClient:
     def send_start(self) -> None:
         self._pub.send(build_command_message(start=True, stop=False, planner=True))
 
+    def seed_hands(self, left: np.ndarray, right: np.ndarray) -> None:
+        """Start the hand step limiter from the measured hands, not from zeros."""
+        for side, hand in zip(_SIDES, (left, right), strict=True):
+            self._last_hand[side] = np.asarray(hand, dtype=np.float64).reshape(HAND_DOF).copy()
+
     def close(self) -> None:
         self._stop.set()
         self._thread.join(timeout=1.0)
@@ -195,6 +231,7 @@ class FakeBodyClient:
             tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]
         ] = []
         self.start_count = 0
+        self.seeded_hands: tuple[np.ndarray, np.ndarray] | None = None
         self.stale = False
 
     def _advance(self) -> None:
@@ -239,6 +276,9 @@ class FakeBodyClient:
 
     def send_start(self) -> None:
         self.start_count += 1
+
+    def seed_hands(self, left: np.ndarray, right: np.ndarray) -> None:
+        self.seeded_hands = (np.array(left, dtype=np.float64), np.array(right, dtype=np.float64))
 
     def feedback_age_s(self) -> float:
         return float("inf") if self.stale else 0.0
