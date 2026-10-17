@@ -191,8 +191,14 @@ Pending operator run (checklist for Task 14).
 5. Expect `home_verified: true` and a right-arm `move_to_pose` with
    `position_error_m < 0.01`, `orientation_error_rad < 0.10` and
    `joint_target_converged: true`.
+6. Kill feedback for 2 s (pause `deploy.sh` output or unplug), restore, press
+   Engage SONIC in Viser; expected: arms ramp back from where they are, no jump
+   (this also checks that a second `command{start=1, planner=1}` to the running
+   `zmq_manager` is accepted); record the result.
 
 Result: ______
+
+Result (step 6): ______
 
 ## 7. Acceptance test
 
