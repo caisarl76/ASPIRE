@@ -23,6 +23,10 @@ launcher requests observation-only startup, but later tool approvals still follo
 your Codex settings. To enforce observation-only operation through MCP, omit the
 flag from the **server** command.
 
+**G1 station.** For the Unitree G1 (GEAR-SONIC) use [Real G1](g1-real.md): the
+server takes `--benchmark g1_real`, `--engage` hands SONIC its start (requires
+`--allow-motion`), and `--fake` is the off-robot analogue of `--sim`.
+
 ## 1. First-time setup
 
 Run all commands from this repository's root. Follow [Host setup](host-setup.md)

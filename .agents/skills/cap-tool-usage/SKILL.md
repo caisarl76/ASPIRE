@@ -100,3 +100,20 @@ cube guide's soft UMI contact guidance.
   and intermediate values are proportional. One successful call completes the transition;
   do not repeat it when the returned gripper state already
   verifies the target.
+
+## G1 station
+
+Applies when the capability graph shows `g1_real` (operator runbook: `docs/g1-real.md`).
+
+- Each arm has seven joints in Unitree order: shoulder_pitch, shoulder_roll,
+  shoulder_yaw, elbow, wrist_roll, wrist_pitch, wrist_yaw. Joint targets are radians.
+- The base frame is `torso` (`torso_link`); give pose targets in it.
+- Reach is short, about 0.55 m from the shoulder. Targets outside the joint limits are
+  refused with "outside the configured limits"; reposition the target, not the tolerance.
+- `cap_set_gripper` maps its scalar between open (all zeros) and the profile's
+  full-close pose. For finger articulation call
+  `cap_g1_real__set_hand_joints(arm, joints)`: seven radians in Dex3 order, clamped to
+  limits, at most 0.25 rad per message. Read fingers with `cap_g1_real__get_hand_state()`.
+- `cap_g1_real__get_controller_metadata` reports contract `g1-sonic-v1-planner-stream`.
+- SONIC owns balance and the keep-alive; the operator engages it and the e-stops are
+  physical. Do not try to start or stop the controller.
