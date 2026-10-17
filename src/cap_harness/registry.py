@@ -75,9 +75,19 @@ YAM_REAL_PUBLIC_TOOL_NAMES = frozenset(
     {"yam_real.get_task_metadata", "yam_real.get_controller_metadata"}
 )
 
+G1_REAL_PUBLIC_TOOL_NAMES = frozenset(
+    {
+        "g1_real.get_task_metadata",
+        "g1_real.get_controller_metadata",
+        "g1_real.set_hand_joints",
+        "g1_real.get_hand_state",
+    }
+)
+
 _APPROVED_EMBODIMENT_PREFIXES = (
     "behavior.",
     "yam_real.",
+    "g1_real.",
     "libero.",
     "robosuite.",
 )
@@ -366,6 +376,7 @@ class ToolRegistry:
 __all__ = [
     "BEHAVIOR_PUBLIC_TOOL_NAMES",
     "DEFAULT_LIBERO_PUBLIC_ALLOWLIST",
+    "G1_REAL_PUBLIC_TOOL_NAMES",
     "LIBERO_PUBLIC_TOOL_NAMES",
     "ROBOSUITE_PUBLIC_TOOL_NAMES",
     "SHARED_PUBLIC_TOOL_NAMES",

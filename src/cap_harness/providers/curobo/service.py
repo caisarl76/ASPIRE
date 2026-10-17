@@ -65,7 +65,7 @@ class Target(BaseModel):
 
 class BaseRequest(BaseModel):
     base_frame: str
-    model: Literal["panda", "dual_panda", "yam_real"]
+    model: Literal["panda", "dual_panda", "yam_real", "g1_real"]
     joint_positions: dict[str, list[float]]
     joint_names: dict[str, list[str]]
     base_transforms: dict[str, list[list[float]]]
@@ -614,7 +614,7 @@ def _ik_solver(request: BaseRequest) -> Any:
 
 def _validate(request: BaseRequest) -> tuple[str, ...]:
     arms = tuple(request.joint_positions)
-    joint_dimension = JOINT_DIMENSIONS["yam_real" if request.model == "yam_real" else "robosuite"]
+    joint_dimension = JOINT_DIMENSIONS.get(request.model, JOINT_DIMENSIONS["robosuite"])
     if not arms or set(request.joint_names) != set(arms):
         raise HTTPException(status_code=400, detail="joint mappings must share non-empty arms")
     if set(request.end_effector_links) != set(arms) or set(request.base_transforms) != set(arms):
@@ -744,7 +744,7 @@ def _joint_goal(request: PlanRequest, planner: Any) -> Any:
     if request.target.type != "joints" or request.target.joint_positions is None:
         raise HTTPException(status_code=400, detail="joint target is required")
     target = np.asarray(request.target.joint_positions, dtype=np.float64)
-    joint_dimension = JOINT_DIMENSIONS["yam_real" if request.model == "yam_real" else "robosuite"]
+    joint_dimension = JOINT_DIMENSIONS.get(request.model, JOINT_DIMENSIONS["robosuite"])
     if target.shape != (joint_dimension,) or not np.all(np.isfinite(target)):
         raise HTTPException(
             status_code=400,

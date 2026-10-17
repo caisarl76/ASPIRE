@@ -18,6 +18,7 @@ JOINT_DIMENSIONS: Mapping[str, int] = MappingProxyType(
         "libero": 7,
         "robosuite": 7,
         "yam_real": 6,
+        "g1_real": 7,
     }
 )
 SUPPORTED_JOINT_DIMENSIONS = frozenset(JOINT_DIMENSIONS.values())
