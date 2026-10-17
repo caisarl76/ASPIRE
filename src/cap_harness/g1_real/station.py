@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from cap_harness.g1_real.body_client import FakeBodyClient, SonicZmqBodyClient
+from cap_harness.g1_real.cameras import ComposedCameraRgbd
 from cap_harness.g1_real.codec import upper_body_from_arms
 from cap_harness.g1_real.config import load_g1_station_config
 from cap_harness.g1_real.env import G1Env
@@ -15,9 +16,18 @@ def build_real_station(
     enable_camera: bool = True,
 ) -> G1Env:
     """Connect to SONIC. Issues no command: ``engage()`` is the operator's step."""
-    del enable_camera  # camera=None until the RGB-D client arrives (Task 12)
     cfg = load_g1_station_config(station, config_root=config_root)
-    return G1Env(cfg, SonicZmqBodyClient(cfg.sonic), camera=None)
+    camera = (
+        ComposedCameraRgbd(
+            cfg.camera.host,
+            cfg.camera.port,
+            role=cfg.camera.role,
+            depth_scale_m=cfg.camera.depth_scale_m,
+        )
+        if enable_camera
+        else None
+    )
+    return G1Env(cfg, SonicZmqBodyClient(cfg.sonic), camera=camera)
 
 
 def build_fake_station(
