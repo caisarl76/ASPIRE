@@ -20,15 +20,14 @@ from .runtime import ProgramExecutionResult, ProgramExecutor
 
 DEFAULT_MAX_STEPS = 1000
 
-_CLOSE_AFTER_RECORDING = frozenset({"behavior"})
 REAL_BENCHMARKS = frozenset({"yam_real", "g1_real"})
 
 
 def _real_embodiment(benchmark: str) -> tuple[Any, ...]:
     """Real-robot embodiment table row.
 
-    (adapter_type, registry_factory, public_tool_names, station_builder, kinematics_type,
-    default_camera_getter); imports stay lazy.
+    (adapter_type, registry_factory, public_tool_names, station_builder, kinematics_type);
+    imports stay lazy.
     """
     if benchmark == "yam_real":
         from .registry import YAM_REAL_PUBLIC_TOOL_NAMES
@@ -43,7 +42,6 @@ def _real_embodiment(benchmark: str) -> tuple[Any, ...]:
             YAM_REAL_PUBLIC_TOOL_NAMES,
             build_real_station,
             YamKinematics,
-            lambda env: env.config.camera.role,
         )
     from .g1_real.adapter import G1RealAdapter
     from .g1_real.kinematics import G1Kinematics
@@ -57,10 +55,10 @@ def _real_embodiment(benchmark: str) -> tuple[Any, ...]:
         G1_REAL_PUBLIC_TOOL_NAMES,
         build_real_station,
         G1Kinematics,
-        lambda env: env.config.camera.role,
     )
 
 
+_CLOSE_AFTER_RECORDING = frozenset({"behavior"})
 """Benchmarks whose simulator must outlive artifact finalization (Isaac Sim ends the process)."""
 BEHAVIOR_VIDEO_FRAME_STRIDE = 3
 
@@ -166,7 +164,6 @@ def run_program(
             extension_allowlist,
             station_builder,
             kinematics_type,
-            default_camera_getter,
         ) = _real_embodiment(benchmark)
         if station_backend == "fake":
             from .g1_real.station import build_fake_station as station_builder
@@ -401,7 +398,7 @@ def run_program(
                 ik_providers=ik_providers,
                 trajectory_planning_providers={"curobo": curobo},
                 integrated_pose_planning_providers={"curobo-integrated": curobo},
-                default_camera=default_camera_getter(adapter.native_env)
+                default_camera=adapter.native_env.config.camera.role
                 if benchmark in REAL_BENCHMARKS
                 else "agentview",
                 recorder=recorder,
