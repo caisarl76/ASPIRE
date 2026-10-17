@@ -1,5 +1,6 @@
 # G1 dual-arm cuRobo model (v2 schema), rooted at torso_link. The loader in
 # providers/curobo/service.py rewrites urdf_path to the absolute packaged path.
+# Arm sphere radii were chosen by eye from the URDF; tune them at the operator smoke.
 robot_cfg:
   kinematics:
     format_version: 2.0
@@ -84,18 +85,18 @@ robot_cfg:
         - center: [0.19, 0, 0]
           radius: 0.06
     self_collision_ignore:
-      torso_link: [left_shoulder_pitch_link, right_shoulder_pitch_link]
+      torso_link: [left_shoulder_pitch_link, right_shoulder_pitch_link, head_link]
       left_shoulder_pitch_link: [left_shoulder_roll_link]
       left_shoulder_roll_link: [left_shoulder_yaw_link]
       left_shoulder_yaw_link: [left_elbow_link]
-      left_elbow_link: [left_wrist_roll_link]
-      left_wrist_roll_link: [left_wrist_pitch_link]
+      left_elbow_link: [left_wrist_roll_link, left_wrist_pitch_link]
+      left_wrist_roll_link: [left_wrist_pitch_link, left_wrist_yaw_link]
       left_wrist_pitch_link: [left_wrist_yaw_link]
       right_shoulder_pitch_link: [right_shoulder_roll_link]
       right_shoulder_roll_link: [right_shoulder_yaw_link]
       right_shoulder_yaw_link: [right_elbow_link]
-      right_elbow_link: [right_wrist_roll_link]
-      right_wrist_roll_link: [right_wrist_pitch_link]
+      right_elbow_link: [right_wrist_roll_link, right_wrist_pitch_link]
+      right_wrist_roll_link: [right_wrist_pitch_link, right_wrist_yaw_link]
       right_wrist_pitch_link: [right_wrist_yaw_link]
     self_collision_buffer:
       torso_link: 0.005
