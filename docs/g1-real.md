@@ -47,7 +47,9 @@ point `sam3_url` / `curobo_url` there (profile fields, or `--sam3-url` /
    scripts/supervise_services.sh --providers sam3,curobo --profile "$ASPIRE_PROFILE"
    ```
 
-5. Workstation, CAP MCP. This binds 5556 and sends no messages yet:
+5. Workstation, CAP MCP. This binds 5556, and with `--engage` runs the engage
+   sequence (below) at server startup: it waits for fresh feedback, holds the
+   measured pose, and sends `start` once.
 
    ```bash
    scripts/start_system2.sh --benchmark g1_real --station g1-lab \
@@ -55,10 +57,12 @@ point `sam3_url` / `curobo_url` there (profile fields, or `--sam3-url` /
      --sam3-url http://127.0.0.1:8114 --curobo-url http://127.0.0.1:8118
    ```
 
-   `--engage` requires `--allow-motion`. The Viser page (http://127.0.0.1:8080) is
-   camera-only for G1 and has an **Engage SONIC** button.
-6. Operator engages (below) and confirms the robot stands in PLANNER idle with
-   fresh feedback. The keep-alive is now live.
+   `--engage` requires `--allow-motion`; the server exits non-zero when the
+   feedback is stale. Without `--engage` nothing is sent until the operator
+   presses the **Engage SONIC** button on the Viser page (http://127.0.0.1:8080,
+   camera-only for G1). The same button re-engages after a feedback outage.
+6. Operator confirms the robot stands in PLANNER idle with fresh feedback. The
+   keep-alive is now live.
 7. Attach the agent; it homes once and reports READY:
 
    ```bash
@@ -71,8 +75,12 @@ In `zmq_manager` mode SONIC has no `]` start key. ASPIRE's operator-only engage 
 waits for fresh feedback, streams a hold at the measured pose for 0.2 s, sends
 `command{start=1, planner=1}` once, then starts the 50 Hz keep-alive. SONIC drops
 the arms to its idle pose after 1 s of silence, which is why the keep-alive exists.
-Engage runs from `--engage` at startup or the Viser button. The agent cannot engage.
-ASPIRE never sends `stop`.
+Engage runs from `--engage` at startup or the Viser button; the batch runner
+(`cap-harness run`) engages on `--allow-motion`. A second engage on a healthy stream
+sends nothing (`already_engaged`). After a feedback outage the keep-alive resumes by
+holding the measured pose (SONIC idled the arms meanwhile, so the pre-outage target
+is not re-sent), and the Viser button runs the full hold plus `start` again. The
+agent cannot engage. ASPIRE never sends `stop`.
 
 ## 4. Preflight gates
 
@@ -176,7 +184,8 @@ Pending operator run (checklist for Task 14).
    wait for `Init done`, then press `9` in the MuJoCo window.
 3. Copy the `g1-lab` profile and set `station: g1-sim`, `feedback_host: 127.0.0.1`,
    `camera.host: 127.0.0.1`; keep the same `command_bind`.
-4. Run the `cap-harness run` command above (without `--station-backend fake`) and
+4. Run the `cap-harness run` command above (without `--station-backend fake`; the
+   batch runner engages on `--allow-motion`, so no separate engage step) and
    `scripts/start_system2.sh --benchmark g1_real --station g1-sim --station-config-root <copy-root> --allow-motion --engage`
    against that profile.
 5. Expect `home_verified: true` and a right-arm `move_to_pose` with

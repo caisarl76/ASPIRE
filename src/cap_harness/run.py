@@ -293,13 +293,20 @@ def run_program(
             if benchmark == "libero-pro":
                 adapter_kwargs["init_mode"] = init_mode
             if benchmark in REAL_BENCHMARKS:
+                env = station_builder(station, config_root=station_config_root)
                 adapter = adapter_type(
-                    station_builder(station, config_root=station_config_root),
+                    env,
                     registry=registry,
                     run_observer=recorder,
                     allow_physical_motion=allow_motion,
                 )
                 recorder.frequency = adapter.control_frequency
+                # A station with an operator engage step (G1 over SONIC) is engaged
+                # here: --allow-motion is the operator's authorization. A refusal
+                # (stale feedback) raises and is recorded as a harness_error below.
+                engage = getattr(env, "engage", None)
+                if allow_motion and callable(engage):
+                    engage()
             else:
                 adapter = adapter_type(**adapter_kwargs)
         with recorder.timing.measure("reset"):
