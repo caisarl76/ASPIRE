@@ -57,8 +57,11 @@ def test_launcher_selects_startup_mode_and_preserves_task(tmp_path, arguments):
             "cap_move_synchronized",
             "cap_move_to_joints",
             "cap_set_gripper",
+            "cap_g1_real__set_hand_joints",
         )
     }
+    for tool in ("cap_g1_real__get_controller_metadata", "cap_g1_real__get_hand_state"):
+        assert f'mcp_servers.cap.tools.{tool}.approval_mode="approve"' in argv
     assert "Session startup:" in prompt
     if "--allow-motion" in arguments:
         assert motion_approvals <= set(argv)
