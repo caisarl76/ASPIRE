@@ -60,6 +60,48 @@ def test_fake_hold_writes_json(tmp_path):
     assert json.loads(path.read_text())["verdict"] == "PASS"
 
 
+def test_stale_feedback_exits_2_and_closes_env(monkeypatch, tmp_path):
+    import importlib.util
+
+    from cap_harness.g1_real.body_client import FakeBodyClient
+    from cap_harness.g1_real.config import load_g1_station_config
+    from cap_harness.g1_real.env import G1Env
+
+    spec = importlib.util.spec_from_file_location(
+        "g1_tracking_acceptance", ROOT / "scripts/g1_tracking_acceptance.py"
+    )
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+
+    class StaleBody(FakeBodyClient):
+        closed = False
+
+        def feedback_age_s(self):
+            return 99.0
+
+        def close(self):
+            self.closed = True
+
+    body = StaleBody()
+    env = G1Env(load_g1_station_config("g1-lab"), body)
+    monkeypatch.setattr(script, "build_real_station", lambda *a, **k: env)
+    assert script.main(["--phase", "hold", "--output-dir", str(tmp_path)]) == 2
+    assert body.closed and not env.keep_alive_running
+
+
+def test_unreachable_segment_writes_error_json(tmp_path):
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    proc = subprocess.run(
+        [sys.executable, "scripts/g1_tracking_acceptance.py", "--fake", "--phase", "segments",
+         "--segment-m", "0.5", "--output-dir", str(tmp_path)],
+        cwd=ROOT, env=env, capture_output=True, text=True, timeout=300,
+    )  # fmt: skip
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    (path,) = tmp_path.glob("*.json")
+    record = json.loads(path.read_text())
+    assert record["verdict"] == "ERROR" and "ik_unreachable" in record["error"]
+
+
 def test_fake_segments_default_length(tmp_path):
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     proc = subprocess.run(

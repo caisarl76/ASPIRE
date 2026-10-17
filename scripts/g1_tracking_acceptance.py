@@ -39,11 +39,11 @@ HOLD_S, HOLD_HZ = 5.0, 50.0
 SEGMENTS, SEGMENT_S = 10, 3.0
 
 
-def run_hold(env) -> dict:
-    samples = []
+def run_hold(env, partial: dict) -> dict:
+    samples = partial.setdefault("samples", [])
     for _ in range(round(HOLD_S * HOLD_HZ)):
         raw = env.body.get_observations()
-        samples.append(np.concatenate([raw["left_joint_pos"], raw["right_joint_pos"]]))
+        samples.append(np.concatenate([raw["left_joint_pos"], raw["right_joint_pos"]]).tolist())
         time.sleep(1.0 / HOLD_HZ)
     measured = np.asarray(samples, dtype=float)
     err = hold_error(np.tile(measured[0], (len(measured), 1)), measured)
@@ -56,7 +56,7 @@ def run_hold(env) -> dict:
     }
 
 
-def run_segments(env, segment_m: float) -> dict:
+def run_segments(env, segment_m: float, partial: dict) -> dict:
     api = CapApi(
         G1RealAdapter(env, allow_physical_motion=True),
         ik_providers={"mink": YamKinematicsIKProvider(G1Kinematics(env.config.model_xml), dof=7)},
@@ -66,7 +66,7 @@ def run_segments(env, segment_m: float) -> dict:
     # ponytail: the interpolation planner has no speed field (time_dilation_factor is curobo's),
     # so segments use its default timing; the actual speed is the logged duration_s.
     strategy = MotionStrategy(ik_solver="mink", trajectory_planner="interpolation")
-    rows = []
+    rows = partial.setdefault("segments", [])
     for i in range(SEGMENTS):
         obs = env.get_observations(side)
         start = obs["ee_pos"]
@@ -110,7 +110,7 @@ def run_segments(env, segment_m: float) -> dict:
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--station", default="g1-lab")
     ap.add_argument("--station-config-root")
@@ -123,43 +123,55 @@ def main() -> int:
         help="segment length (0.3 is unreachable from home)",
     )
     ap.add_argument("--fake", action="store_true", help="use the fake body (no robot)")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     try:
-        if args.fake:
-            env = build_fake_station(args.station, config_root=args.station_config_root)
-        else:
-            env = build_real_station(args.station, config_root=args.station_config_root)
-            env.engage()
+        build = build_fake_station if args.fake else build_real_station
+        env = build(args.station, config_root=args.station_config_root)
     except Exception as exc:
         print(f"SETUP ERROR: {exc}")
         return 2
+
+    def write(verdict: str, data: dict) -> None:
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        record = {
+            "phase": args.phase,
+            "fake": args.fake,
+            "verdict": verdict,
+            "thresholds": {
+                "hold_max_error_rad": HOLD_MAX_ERROR_RAD,
+                "segment_max_position_m": SEGMENT_MAX_POSITION_M,
+                "segment_max_orientation_rad": SEGMENT_MAX_ORIENTATION_RAD,
+            },
+            **data,
+        }
+        (args.output_dir / f"{stamp}.json").write_text(json.dumps(record, indent=2))
+
+    partial: dict = {}
     try:
-        if args.phase == "loaded":
-            input("Place a 300 g object in the primary hand and press Enter")
-        phase = run_segments(env, args.segment_m) if args.phase == "segments" else run_hold(env)
-    except Exception as exc:
-        print(f"SETUP ERROR: {exc}")
-        return 2
+        try:
+            env.engage()  # idempotent; refuses on stale feedback
+        except Exception as exc:
+            print(f"SETUP ERROR: {exc}")
+            return 2
+        try:
+            if args.phase == "loaded":
+                input("Place a 300 g object in the primary hand and press Enter")
+            if args.phase == "segments":
+                phase = run_segments(env, args.segment_m, partial)
+            else:
+                phase = run_hold(env, partial)
+        except (Exception, KeyboardInterrupt) as exc:
+            aborted = isinstance(exc, KeyboardInterrupt)
+            print("ABORTED" if aborted else f"ERROR: {exc}")
+            write("ERROR", {"error": "aborted by operator" if aborted else str(exc), **partial})
+            return 2
     finally:
         env.close()
     verdict = "PASS" if phase["ok"] else "FAIL"
     print(f"{verdict} {args.phase}: {phase['summary']}")
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    record = {
-        "phase": args.phase,
-        "fake": args.fake,
-        "verdict": verdict,
-        "thresholds": {
-            "hold_max_error_rad": HOLD_MAX_ERROR_RAD,
-            "segment_max_position_m": SEGMENT_MAX_POSITION_M,
-            "segment_max_orientation_rad": SEGMENT_MAX_ORIENTATION_RAD,
-        },
-        "summary": phase["summary"],
-        **phase["data"],
-    }
-    (args.output_dir / f"{stamp}.json").write_text(json.dumps(record, indent=2))
+    write(verdict, {"summary": phase["summary"], **phase["data"]})
     return 0 if phase["ok"] else 1
 
 
