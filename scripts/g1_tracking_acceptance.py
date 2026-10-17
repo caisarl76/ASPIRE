@@ -3,7 +3,7 @@
 WARNING: this MOVES THE ROBOT. Run it only after the runbook preflight
 (docs/g1-real.md), with the operator ready: keyboard ``O`` on PC2 is the e-stop.
 
-Phases: ``hold`` (5 s of the measured pose, joint drift <= 0.05 rad), ``segments``
+Phases: ``hold`` (5 s against the commanded pose, joint error <= 0.05 rad), ``segments``
 (ten 0.15 m torso-X moves on the primary arm, <= 1.5 cm and <= 5 deg), ``loaded``
 (``hold`` with a 300 g object in the primary hand). ``--fake`` runs the plumbing
 against the fake body. Exit 0 PASS, 1 FAIL, 2 setup error.
@@ -23,6 +23,7 @@ import numpy as np
 from cap_harness.api import CapApi
 from cap_harness.contracts import MotionStrategy, Pose
 from cap_harness.errors import ErrorCode
+from cap_harness.g1_real import codec
 from cap_harness.g1_real.acceptance import (
     HOLD_MAX_ERROR_RAD,
     SEGMENT_MAX_ORIENTATION_RAD,
@@ -40,19 +41,24 @@ SEGMENTS, SEGMENT_S = 10, 3.0
 
 
 def run_hold(env, partial: dict) -> dict:
+    # Every sample is compared to the commanded arms (the keep-alive holds this
+    # target), so a steady tracking offset counts as error, not as zero drift.
+    _, left, right = codec.arms_from_upper_body(env.last_command()[0])
+    target = np.concatenate([left, right])
+    partial["target"] = target.tolist()
     samples = partial.setdefault("samples", [])
     for _ in range(round(HOLD_S * HOLD_HZ)):
         raw = env.body.get_observations()
         samples.append(np.concatenate([raw["left_joint_pos"], raw["right_joint_pos"]]).tolist())
         time.sleep(1.0 / HOLD_HZ)
     measured = np.asarray(samples, dtype=float)
-    err = hold_error(np.tile(measured[0], (len(measured), 1)), measured)
+    err = hold_error(np.tile(target, (len(measured), 1)), measured)
     ok = max(err.values()) <= HOLD_MAX_ERROR_RAD
     return {
         "ok": ok,
         "summary": f"max joint error left {err['left']:.4f} rad, right {err['right']:.4f} rad "
         f"(<= {HOLD_MAX_ERROR_RAD})",
-        "data": {"max_error_rad": err, "samples": measured.tolist()},
+        "data": {"max_error_rad": err, "target": target.tolist(), "samples": measured.tolist()},
     }
 
 

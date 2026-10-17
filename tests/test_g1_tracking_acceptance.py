@@ -60,18 +60,23 @@ def test_fake_hold_writes_json(tmp_path):
     assert json.loads(path.read_text())["verdict"] == "PASS"
 
 
-def test_stale_feedback_exits_2_and_closes_env(monkeypatch, tmp_path):
+def _load_script():
     import importlib.util
-
-    from cap_harness.g1_real.body_client import FakeBodyClient
-    from cap_harness.g1_real.config import load_g1_station_config
-    from cap_harness.g1_real.env import G1Env
 
     spec = importlib.util.spec_from_file_location(
         "g1_tracking_acceptance", ROOT / "scripts/g1_tracking_acceptance.py"
     )
     script = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(script)
+    return script
+
+
+def test_stale_feedback_exits_2_and_closes_env(monkeypatch, tmp_path):
+    from cap_harness.g1_real.body_client import FakeBodyClient
+    from cap_harness.g1_real.config import load_g1_station_config
+    from cap_harness.g1_real.env import G1Env
+
+    script = _load_script()
 
     class StaleBody(FakeBodyClient):
         closed = False
@@ -112,3 +117,29 @@ def test_fake_segments_default_length(tmp_path):
     assert proc.returncode == 0, proc.stdout + proc.stderr
     (path,) = tmp_path.glob("*.json")
     assert len(json.loads(path.read_text())["segments"]) == 10
+
+
+def test_hold_measures_against_the_commanded_target(monkeypatch, tmp_path):
+    from cap_harness.g1_real.body_client import FakeBodyClient
+    from cap_harness.g1_real.config import load_g1_station_config
+    from cap_harness.g1_real.env import G1Env
+
+    class OffsetBody(FakeBodyClient):
+        """Tracks with a steady 0.06 rad offset on one joint: drift is zero, error is not."""
+
+        def get_observations(self):
+            obs = super().get_observations()
+            obs["left_joint_pos"][0] += 0.06
+            return obs
+
+    script = _load_script()
+    monkeypatch.setattr(script, "HOLD_S", 0.5)
+    for body_type, expected in ((OffsetBody, 1), (FakeBodyClient, 0)):
+        out = tmp_path / body_type.__name__
+        env = G1Env(load_g1_station_config("g1-lab"), body_type(tau_s=0.02))
+        monkeypatch.setattr(script, "build_real_station", lambda *a, **k: env)
+        assert script.main(["--phase", "hold", "--output-dir", str(out)]) == expected
+        (path,) = out.glob("*.json")
+        record = json.loads(path.read_text())
+        assert record["verdict"] == ("FAIL" if expected else "PASS")
+        assert len(record["target"]) == 14
