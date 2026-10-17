@@ -13,9 +13,9 @@ instead, so a trajectory is captured as a trajectory.
 
 Raw files written into ``out_dir``:
 
-    {left,right}-joint_pos.npy      (N, 6)    measured
+    {left,right}-joint_pos.npy      (N, dof)  measured
     {left,right}-gripper_pos.npy    (N, 1)    measured
-    action-{left,right}-pos.npy     (N, 7)    commanded: joints(6) + gripper(1)
+    action-{left,right}-pos.npy     (N, dof+1) commanded: joints(dof) + gripper(1)
     action-fresh.npy                (N,)      bool: a NEW command this frame
     action-source.npy / .json       (N,)      what was driving
     timestamp.npy                   (N,)      seconds since start
@@ -49,10 +49,11 @@ DEFAULT_FPS = 30
 #: NaN-padded when it does not. Padding rather than omitting keeps every channel
 #: the same length as the episode, so a consumer can tell "not measured" from
 #: "measured zero" instead of having to reconcile ragged arrays.
+#: A width of 0 means "the plant's joint count", resolved once at ``start()``.
 FORCE_CHANNELS: dict[str, int] = {
-    "joint_vel": ARM_DOF,
-    "joint_eff": ARM_DOF,
-    "force_feedback_torque": ARM_DOF,
+    "joint_vel": 0,
+    "joint_eff": 0,
+    "force_feedback_torque": 0,
     "eef_force": 3,
 }
 
@@ -84,6 +85,8 @@ class YamEpisodeRecorder:
         self.current_source = source
 
         self._env: Any = None
+        #: Arm width; ``start()`` replaces it with the plant's ``dof``.
+        self._dof = ARM_DOF
         self._observations: dict[str, list[np.ndarray]] = {
             f"{arm}-{channel}": [] for arm in ARMS for channel in ("joint_pos", "gripper_pos")
         }
@@ -110,6 +113,7 @@ class YamEpisodeRecorder:
     def start(self, env: Any, *, meta: dict[str, Any] | None = None) -> None:
         """Begin sampling ``env`` on a background thread."""
         self._env = env
+        self._dof = int(getattr(env, "dof", ARM_DOF))
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.video_dir.mkdir(parents=True, exist_ok=True)
         if self.cameras is None:
@@ -150,7 +154,7 @@ class YamEpisodeRecorder:
             last_action = getattr(env, "_last_action_input", None)
             for arm in ARMS:
                 observation = env.get_observations(arm)
-                joints = np.asarray(observation["joint_pos"], dtype=np.float64).reshape(ARM_DOF)
+                joints = np.asarray(observation["joint_pos"], dtype=np.float64).reshape(self._dof)
                 gripper = float(
                     np.asarray(observation["gripper_pos"], dtype=np.float64).reshape(-1)[0]
                 )
@@ -185,13 +189,13 @@ class YamEpisodeRecorder:
         last_action = getattr(env, "_last_action_input", {}) or {}
         for arm in ARMS:
             observation = env.get_observations(arm)
-            joints = np.asarray(observation["joint_pos"], dtype=np.float64).reshape(ARM_DOF)
+            joints = np.asarray(observation["joint_pos"], dtype=np.float64).reshape(self._dof)
             gripper = np.asarray(observation["gripper_pos"], dtype=np.float64).reshape(1)
             self._observations[f"{arm}-joint_pos"].append(joints)
             self._observations[f"{arm}-gripper_pos"].append(gripper)
             for channel, width in FORCE_CHANNELS.items():
                 self._force[f"{arm}-{channel}"].append(
-                    _fixed_width(observation.get(channel), width)
+                    _fixed_width(observation.get(channel), width or self._dof)
                 )
             # The trainable action stream: what was commanded, falling back to a
             # hold at the measured pose when nothing has been commanded yet.
@@ -202,7 +206,7 @@ class YamEpisodeRecorder:
                 self._actions[arm].append(
                     np.concatenate(
                         [
-                            np.asarray(commanded[0], dtype=np.float64).reshape(-1)[:ARM_DOF],
+                            np.asarray(commanded[0], dtype=np.float64).reshape(-1)[: self._dof],
                             np.asarray([commanded[1]], dtype=np.float64).reshape(1),
                         ]
                     )
