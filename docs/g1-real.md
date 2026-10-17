@@ -125,6 +125,47 @@ scripts/start_system2.sh --benchmark g1_real --station g1-lab \
   --station-config-root <root> --allow-motion --fake
 ```
 
+### Fake-plant checks (run on the workstation)
+
+Run 2026-10-17 from the worktree root with `PYTHONPATH= VIRTUAL_ENV=` cleared. The
+fake plant is an engaged first-order-lag body with a synthetic camera; this exercises
+the real CLI and the real MCP server, not SONIC.
+
+Batch runner (exit 0):
+
+```bash
+.venv-system2/bin/cap-harness run --benchmark g1_real --station g1-lab --station-backend fake \
+  --suite joint_motion --task-id 0 --program examples/g1_real/joint_motion.py \
+  --allow-motion --output-root <scratch>/g1-fake-run
+```
+
+Observed: `program_ok=True task_success=False termination_reason=program_completed`;
+`episode/raw/right-joint_pos.npy` has shape `(29, 7)`.
+
+System 2 server on port 8223, driven by `scripts/g1_fake_mcp_smoke.py`:
+
+```bash
+scripts/start_system2.sh --benchmark g1_real --station g1-lab --fake --allow-motion \
+  --engage --no-viser --port 8223
+.venv-system2/bin/python scripts/g1_fake_mcp_smoke.py --port 8223   # --port defaults to 8222
+```
+
+Observed: `/health` returned `{"ok":true,"job":null}`; the tool list holds
+`cap_g1_real__get_controller_metadata`, `cap_g1_real__get_hand_state` and
+`cap_g1_real__set_hand_joints` beside the `cap_*` motion tools. `cap_program_go_home`:
+`home_verified: true`, `joint_residual_rad` left 0.0 / right 1.35e-07. Right
+`cap_move_to_pose` to the measured position + 5 cm x (frame `torso`, `mink` +
+`interpolation`): `ok: true`, `position_error_m` 4.4e-05, `orientation_error_rad`
+1.3e-03, `joint_target_converged: true`. `cap_g1_real__get_hand_state`: all zeros.
+`cap_g1_real__set_hand_joints` left with the profile `closed` values: `ok: true`; the
+final left `gripper_positions` is 0.0175 (1.0 is open). The script exits 0 and prints `OK`.
+
+Note: on g1_real `move_to_pose` reports task-space errors, not `joint_residual_rad`;
+only `cap_program_go_home` does. The "residual < 0.10" gate in the sim2sim step
+therefore reads `position_error_m` / `orientation_error_rad` for the move (the smoke
+script requires < 0.01 m and < 0.10 rad). The smoke script moves whatever server it is
+pointed at: re-run it against the real server only with the operator ready.
+
 ### Sim2sim (SONIC MuJoCo loop)
 
 Pending operator run (checklist for Task 14).
