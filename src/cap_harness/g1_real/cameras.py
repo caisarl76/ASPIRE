@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import threading
 import time
 from typing import Any
@@ -15,6 +16,8 @@ import numpy as np
 import zmq
 
 from cap_harness.yam_real.cameras import CameraFrame
+
+logger = logging.getLogger(__name__)
 
 _POLL_MS = 100
 
@@ -37,7 +40,7 @@ class ComposedCameraRgbd:
         self._depth_scale_m = depth_scale_m
         self.depth_missing = False
         self.intrinsics_missing = False
-        self._latest: tuple[dict[str, Any], float] | None = None
+        self._frame: CameraFrame | None = None
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._sock = zmq.Context.instance().socket(zmq.SUB)
@@ -57,22 +60,21 @@ class ComposedCameraRgbd:
                 msg = msgpack.unpackb(
                     self._sock.recv(), object_hook=msgpack_numpy.decode, raw=False
                 )
-            except Exception:  # noqa: S112
-                continue  # malformed message must not kill the reader
+                frame, depth_missing, intrinsics_missing = self._assemble(msg, time.monotonic())
+            except Exception as exc:
+                # A bad message is dropped; the previous good frame stays.
+                logger.warning("dropping undecodable camera message: %r", exc)
+                continue
             with self._lock:
-                self._latest = (msg, time.monotonic())
+                self._frame = frame
+                self.depth_missing = depth_missing
+                self.intrinsics_missing = intrinsics_missing
 
-    def read(self) -> CameraFrame | None:
-        with self._lock:
-            latest = self._latest
-        if latest is None:
-            return None
-        msg, received_s = latest
-        images = msg.get("images", {})
+    def _assemble(self, msg: dict[str, Any], received_s: float) -> tuple[CameraFrame, bool, bool]:
+        images = msg["images"]
         rgb = _decode_rgb(images[self._role])
         h, w = rgb.shape[:2]
         intr = msg.get("intrinsics", {}).get(self._role)
-        self.intrinsics_missing = intr is None
         if intr is None:
             k = np.array([[1, 0, w / 2], [0, 1, h / 2], [0, 0, 1]], np.float64)
         else:
@@ -80,13 +82,17 @@ class ComposedCameraRgbd:
                 [[intr["fx"], 0, intr["ppx"]], [0, intr["fy"], intr["ppy"]], [0, 0, 1]], np.float64
             )
         depth = images.get(f"{self._role}_depth")
-        self.depth_missing = depth is None
         if depth is None:
             depth_m = np.full((h, w), np.nan)
         else:
             scale = (intr or {}).get("depth_scale", self._depth_scale_m)
             depth_m = np.asarray(depth).astype(np.float64) * scale
-        return CameraFrame(rgb=rgb, depth_m=depth_m, intrinsics=k, timestamp_s=received_s)
+        frame = CameraFrame(rgb=rgb, depth_m=depth_m, intrinsics=k, timestamp_s=received_s)
+        return frame, depth is None, intr is None
+
+    def read(self) -> CameraFrame | None:
+        with self._lock:
+            return self._frame
 
     def close(self) -> None:
         self._stop.set()

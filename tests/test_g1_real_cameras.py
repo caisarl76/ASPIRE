@@ -88,3 +88,26 @@ def test_read_is_none_before_first_message():
     cam = ComposedCameraRgbd("127.0.0.1", 5733)
     assert cam.read() is None
     cam.close()
+
+
+def test_undecodable_messages_are_dropped_and_keep_last_good_frame():
+    cam = ComposedCameraRgbd("127.0.0.1", 5734)
+    pub = zmq.Context.instance().socket(zmq.PUB)
+    pub.bind("tcp://127.0.0.1:5734")
+    time.sleep(0.3)
+
+    def send(payload):
+        pub.send(msgpack.packb(payload, default=m.encode, use_bin_type=True))
+        time.sleep(0.3)
+
+    send({"images": {"other": np.zeros((4, 4, 3), np.uint8)}})
+    send({"timestamps": {}})
+    send({"images": {"ego_view": b"not a jpeg"}})
+    assert cam.read() is None
+    send({"images": {"ego_view": np.zeros((4, 4, 3), np.uint8)}})
+    good = cam.read()
+    assert good is not None
+    send({"images": {"ego_view": b"not a jpeg"}})
+    assert cam.read() is good
+    cam.close()
+    pub.close()

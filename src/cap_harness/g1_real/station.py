@@ -17,6 +17,7 @@ def build_real_station(
 ) -> G1Env:
     """Connect to SONIC. Issues no command: ``engage()`` is the operator's step."""
     cfg = load_g1_station_config(station, config_root=config_root)
+    body = SonicZmqBodyClient(cfg.sonic)  # before the camera: a failure must not leak it
     camera = (
         ComposedCameraRgbd(
             cfg.camera.host,
@@ -27,7 +28,7 @@ def build_real_station(
         if enable_camera
         else None
     )
-    return G1Env(cfg, SonicZmqBodyClient(cfg.sonic), camera=camera)
+    return G1Env(cfg, body, camera=camera)
 
 
 def build_fake_station(
