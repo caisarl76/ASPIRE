@@ -164,6 +164,8 @@ cap_harness = [
   "yam_real/description/**/*.urdf",
   "yam_real/description/**/*.yml",
   "yam_real/description/**/*.stl",
+  "g1_real/description/*.xml",
+  "g1_real/description/*.urdf",
 ]
 [tool.uv.sources]
 contact-graspnet-pytorch = { path = "third_party/contact_graspnet_pytorch", editable = true }

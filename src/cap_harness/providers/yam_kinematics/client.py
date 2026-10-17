@@ -40,16 +40,18 @@ ARM_DOF = 6
 
 
 class YamKinematicsIKProvider:
-    """Local IK for the 6-DOF YAM arms."""
+    """Local IK for a bimanual mink solver: 6-DOF YAM by default, ``dof=7`` for G1."""
 
     def __init__(
         self,
         kinematics: object,
         *,
         tolerance_m: float = DEFAULT_IK_TOLERANCE_M,
+        dof: int = ARM_DOF,
     ) -> None:
         self._kin = kinematics
         self._tolerance_m = float(tolerance_m)
+        self._dof = int(dof)
 
     def solve_ik(
         self,
@@ -62,7 +64,7 @@ class YamKinematicsIKProvider:
 
         try:
             current = {
-                name: np.asarray(robot_state.joint_positions[name], dtype=float).reshape(ARM_DOF)
+                name: np.asarray(robot_state.joint_positions[name], dtype=float).reshape(self._dof)
                 for name in _ARMS
             }
             poses = {name: robot_state.end_effector_poses[name] for name in _ARMS}
@@ -125,7 +127,7 @@ class YamKinematicsIKProvider:
         joints = np.asarray(
             left_solution if side == "left" else right_solution, dtype=float
         ).reshape(-1)
-        if joints.shape[0] != ARM_DOF or not bool(np.all(np.isfinite(joints))):
+        if joints.shape[0] != self._dof or not bool(np.all(np.isfinite(joints))):
             return IKResult(
                 ok=False,
                 embodiment=robot_state.embodiment,
