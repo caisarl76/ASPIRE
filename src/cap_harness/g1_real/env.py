@@ -173,11 +173,17 @@ class G1Env:
         while not self._stop.wait(KEEP_ALIVE_PERIOD_S):
             if self._streaming:
                 continue
-            with self._lock:
-                if self._streaming or self._last_cmd is None:
-                    continue
-                q17, lh, rh = self._last_cmd
-                refused = self._send_tick(q17, np.zeros(UPPER_BODY_DOF), lh, rh)
+            # A dead keep-alive is a physical event (SONIC idles the arms after
+            # 1 s of silence), so a failing send is logged and retried, never fatal.
+            try:
+                with self._lock:
+                    if self._streaming or self._last_cmd is None:
+                        continue
+                    q17, lh, rh = self._last_cmd
+                    refused = self._send_tick(q17, np.zeros(UPPER_BODY_DOF), lh, rh)
+            except Exception as exc:
+                _log.warning("keep-alive send failed: %s: %s", type(exc).__name__, exc)
+                continue
             if refused is None:
                 self._stale_logged = False
             elif not self._stale_logged:
@@ -231,8 +237,31 @@ class G1Env:
         Hands follow the batch's gripper scalar through ``codec.hand_pose``
         unless ``batch.meta["hand_joints"]`` carries explicit ``{side: (N, 7)}``
         rows for a side. The waist holds the profile's target on every tick.
+
+        Refused before anything is resolved or published when the stream is
+        not engaged (nothing would hold the target afterwards), and when a
+        caller-supplied arm row lies outside the profile limits.
         """
+        if self._engaged is None:
+            return {"success": False, "reason": "not engaged: call engage() first"}
+        if not self.keep_alive_running:
+            return {"success": False, "reason": "keep-alive not running; re-engage the station"}
         resolved = resolve_action_batch(self, batch)
+        for side, rows in (
+            ("left", resolved.left_joint_positions),
+            ("right", resolved.right_joint_positions),
+        ):
+            arm = self.config.arms[side]
+            bad = np.argwhere((rows < arm.lower) | (rows > arm.upper))
+            if bad.size:
+                row, i = (int(v) for v in bad[0])
+                return {
+                    "success": False,
+                    "reason": (
+                        f"{side} joint {i} target {rows[row, i]:.4f} is outside the "
+                        f"configured limits [{arm.lower[i]:.4f}, {arm.upper[i]:.4f}]"
+                    ),
+                }
         self._note_action_input(resolved)
         n = int(resolved.timestamps.size)
         overrides = resolved.meta.get("hand_joints") or {}

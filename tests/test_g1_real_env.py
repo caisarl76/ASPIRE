@@ -49,11 +49,91 @@ def test_keep_alive_resends_last_target_between_batches(env):
 
 def test_stale_feedback_aborts_a_batch(env):
     env.body.stale = True
+    n = len(env.body.commands)
     result = env.execute_action_batch(
         YamActionBatch.joint_abs([0.0, 0.5], np.zeros((2, 7)), np.zeros((2, 7)), source="test")
     )
     assert result["success"] is False
     assert "stale" in result["reason"]
+    assert len(env.body.commands) == n
+
+
+def test_batch_before_engage_is_refused():
+    cfg = load_g1_station_config("g1-lab")
+    fake = FakeBodyClient()
+    e = G1Env(cfg, fake, camera=SyntheticCamera())
+    result = e.execute_action_batch(
+        YamActionBatch.joint_abs([0.0], np.zeros(7), np.zeros(7), source="test")
+    )
+    assert result["success"] is False
+    assert "not engaged" in result["reason"]
+    assert fake.commands == []
+    e.close()
+
+
+class _RaisesOnce(FakeBodyClient):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.raise_next = False
+
+    def command_upper_body(self, *args, **kwargs):
+        if self.raise_next:
+            self.raise_next = False
+            raise OSError("socket closed")
+        super().command_upper_body(*args, **kwargs)
+
+
+def test_keep_alive_survives_a_body_client_error():
+    cfg = load_g1_station_config("g1-lab")
+    fake = _RaisesOnce()
+    e = G1Env(cfg, fake, camera=SyntheticCamera())
+    e.engage()
+    fake.raise_next = True
+    time.sleep(0.1)
+    n = len(fake.commands)
+    time.sleep(0.1)
+    assert fake.raise_next is False
+    assert e.keep_alive_running
+    assert len(fake.commands) > n
+    e.close()
+
+
+def test_out_of_range_arm_target_is_refused(env):
+    left = env.get_observations("left")["joint_pos"]
+    right = env.get_observations("right")["joint_pos"].copy()
+    right[1] = env.config.arms["right"].upper[1] + 0.5
+    before = env.body.commands[-1][0]
+    n = len(env.body.commands)
+    result = env.execute_action_batch(
+        YamActionBatch.joint_abs([0.0], [left], [right], source="test"), settle_s=0.0
+    )
+    assert result["success"] is False
+    assert "outside the configured limits" in result["reason"]
+    assert "right joint 1" in result["reason"]
+    # only keep-alive re-sends of the previous target may have gone out
+    assert all(np.array_equal(c[0], before) for c in env.body.commands[n:])
+    assert env._action_input_seq["right"] == 0
+
+
+def test_go_home_interpolates_from_measured_to_home(env):
+    cfg = env.config
+    away = cfg.arms["right"].home_joints.copy()
+    away[0] += 0.1
+    env.execute_action_batch(
+        YamActionBatch.joint_abs([0.0], [cfg.arms["left"].home_joints], [away], source="test"),
+        settle_s=0.0,
+    )
+    time.sleep(0.1)
+    measured = env.measured_command()[0]
+    home = codec.upper_body_from_arms(
+        cfg.waist_targets, cfg.arms["left"].home_joints, cfg.arms["right"].home_joints
+    )
+    assert not np.allclose(measured, home, atol=1e-3)
+    n = len(env.body.commands)
+    result = env.go_home(duration_s=0.1)
+    assert result["success"] is True
+    np.testing.assert_allclose(env.body.commands[n][0], measured, atol=1e-3)
+    np.testing.assert_array_equal(env.body.commands[-1][0], home)
 
 
 def test_gripper_scalar_round_trips_through_the_hand(env):
