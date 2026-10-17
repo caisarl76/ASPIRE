@@ -13,7 +13,9 @@ from typing import Any
 
 import numpy as np
 
-from cap_harness.contracts import Observation, RobotState, TaskContext
+from cap_harness.contracts import ArmCommand, Observation, Pose, RobotState, TaskContext
+from cap_harness.yam_real.codec import observation as yam_observation
+from cap_harness.yam_real.codec import quat_xyzw_to_wxyz
 
 EMBODIMENT = "g1_real"
 ARMS = ("left", "right")
@@ -80,12 +82,54 @@ def heading_yaw_from_quat_wxyz(q: Any) -> float:
 
 
 def robot_state(env: Any, *, timestamp_s: float | None = None) -> RobotState:
-    raise NotImplementedError("filled in once G1Env exists")
+    """Build a shared ``RobotState`` from both arms of a G1 plant.
+
+    The env already projects each Dex3 hand onto its open/closed line
+    (``hand_scalar``), so ``gripper_positions`` is that scalar per side.
+    """
+    positions: dict[str, np.ndarray] = {}
+    velocities: dict[str, np.ndarray] = {}
+    poses: dict[str, Pose] = {}
+    grippers: dict[str, float] = {}
+    names: dict[str, tuple[str, ...]] = {}
+    base_frame = env.config.base_frame
+    for side in ARMS:
+        obs = env.get_observations(side)
+        positions[side] = np.asarray(obs["joint_pos"], dtype=np.float64).reshape(ARM_DOF)
+        velocities[side] = np.asarray(obs["joint_vel"], dtype=np.float64).reshape(ARM_DOF)
+        poses[side] = Pose(
+            position=np.asarray(obs["ee_pos"], dtype=np.float64).reshape(3),
+            quaternion_wxyz=quat_xyzw_to_wxyz(obs["ee_quat"]),
+            frame=base_frame,
+        )
+        grippers[side] = float(np.asarray(obs["gripper_pos"], dtype=np.float64).reshape(-1)[0])
+        names[side] = tuple(env.config.arms[side].joint_names)
+    return RobotState(
+        joint_positions=positions,
+        joint_velocities=velocities,
+        end_effector_poses=poses,
+        gripper_positions=grippers,
+        base_frame=base_frame,
+        joint_names=names,
+        timestamp_s=timestamp_s,
+        embodiment=EMBODIMENT,
+    )
 
 
 def observation(env: Any, *, task_context: TaskContext | None = None) -> Observation:
-    raise NotImplementedError("filled in once G1Env exists")
+    """Assemble a full harness observation; the camera half is shared with YAM."""
+    return yam_observation(env, task_context=task_context, robot_state_fn=robot_state)
 
 
 def arm_command_targets(action: Any) -> tuple[dict[str, np.ndarray], dict[str, float | None]]:
-    raise NotImplementedError("filled in once G1Env exists")
+    """Split a ``RobotAction`` into per-arm 7-joint targets and gripper scalars."""
+    joints: dict[str, np.ndarray] = {}
+    grippers: dict[str, float | None] = {}
+    for side, command in action.arms.items():
+        if not isinstance(command, ArmCommand):
+            raise ValueError(f"arms[{side!r}] must be an ArmCommand")
+        joints[side] = np.asarray(command.target, dtype=np.float64).reshape(-1)[:ARM_DOF]
+        grippers[side] = (
+            None if command.gripper_position is None else float(command.gripper_position)
+        )
+    return joints, grippers

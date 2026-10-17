@@ -16,6 +16,7 @@ across this boundary and are converted rather than assumed:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -189,8 +190,17 @@ def aux_camera_observation(env: Any, role: str) -> CameraObservation | None:
     )
 
 
-def observation(env: Any, *, task_context: TaskContext | None = None) -> Observation:
-    """Assemble a full harness observation from the plant."""
+def observation(
+    env: Any,
+    *,
+    task_context: TaskContext | None = None,
+    robot_state_fn: Callable[[Any], RobotState] = robot_state,
+) -> Observation:
+    """Assemble a full harness observation from the plant.
+
+    ``robot_state_fn`` lets another embodiment (the G1) reuse the camera
+    assembly while supplying its own joint layout.
+    """
     camera = camera_observation(env)
     if camera is None:
         raise RuntimeError(
@@ -205,7 +215,7 @@ def observation(env: Any, *, task_context: TaskContext | None = None) -> Observa
         aux = aux_camera_observation(env, role)
         if aux is not None:
             cameras[role] = aux
-    state = robot_state(env)
+    state = robot_state_fn(env)
     return Observation(
         cameras=cameras,
         robot_state=state,

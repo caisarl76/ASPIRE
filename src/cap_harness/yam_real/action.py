@@ -96,12 +96,12 @@ def _as_timestamps(values: Any) -> np.ndarray:
     return ts
 
 
-def _as_rows(values: Any, n: int, *, name: str) -> np.ndarray:
+def _as_rows(values: Any, n: int, *, name: str, dof: int = ARM_DOF) -> np.ndarray:
     arr = np.asarray(values, dtype=np.float64)
     if arr.ndim == 1:
         arr = arr.reshape(1, -1)
-    if arr.ndim != 2 or arr.shape[0] != n or arr.shape[1] < ARM_DOF:
-        raise ValueError(f"{name} must have shape (N,{ARM_DOF}+) with N={n}; got {arr.shape}")
+    if arr.ndim != 2 or arr.shape[0] != n or arr.shape[1] < dof:
+        raise ValueError(f"{name} must have shape (N,{dof}+) with N={n}; got {arr.shape}")
     if not np.all(np.isfinite(arr)):
         raise ValueError(f"{name} contains non-finite values")
     return arr
@@ -125,6 +125,10 @@ def resolve_action_batch(env: Any, batch: YamActionBatch | dict[str, Any]) -> Re
     An unspecified gripper holds its **measured** position rather than defaulting
     to open or closed, so a joint-only motion cannot drop what the robot is
     carrying.
+
+    The arm width comes from ``env.dof`` (six on YAM, seven on the G1) so one
+    batch type serves both plants; a row wider than that carries its gripper
+    at index ``dof``.
     """
     if isinstance(batch, dict):
         batch = YamActionBatch(**batch)
@@ -136,22 +140,23 @@ def resolve_action_batch(env: Any, batch: YamActionBatch | dict[str, Any]) -> Re
 
     ts = _as_timestamps(batch.timestamps)
     n = int(ts.size)
-    left = _as_rows(batch.left, n, name="left joint action")
-    right = _as_rows(batch.right, n, name="right joint action")
+    dof = int(getattr(env, "dof", ARM_DOF))
+    left = _as_rows(batch.left, n, name="left joint action", dof=dof)
+    right = _as_rows(batch.right, n, name="right joint action", dof=dof)
 
     observed = {side: env.get_observations(side) for side in ARMS}
-    # A joint7 row carries its own gripper at index 6; an explicit argument wins.
+    # A joint7 row carries its own gripper at index ``dof``; an explicit argument wins.
     left_grip_source = batch.left_gripper
-    if left_grip_source is None and left.shape[1] > ARM_DOF:
-        left_grip_source = left[:, ARM_DOF : ARM_DOF + 1]
+    if left_grip_source is None and left.shape[1] > dof:
+        left_grip_source = left[:, dof : dof + 1]
     right_grip_source = batch.right_gripper
-    if right_grip_source is None and right.shape[1] > ARM_DOF:
-        right_grip_source = right[:, ARM_DOF : ARM_DOF + 1]
+    if right_grip_source is None and right.shape[1] > dof:
+        right_grip_source = right[:, dof : dof + 1]
 
     return ResolvedYamAction(
         timestamps=ts,
-        left_joint_positions=left[:, :ARM_DOF],
-        right_joint_positions=right[:, :ARM_DOF],
+        left_joint_positions=left[:, :dof],
+        right_joint_positions=right[:, :dof],
         left_gripper_positions=_gripper(left_grip_source, observed["left"]["gripper_pos"], n),
         right_gripper_positions=_gripper(right_grip_source, observed["right"]["gripper_pos"], n),
         source=str(batch.source),
