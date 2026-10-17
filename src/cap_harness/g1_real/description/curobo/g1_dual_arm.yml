@@ -1,0 +1,116 @@
+# G1 dual-arm cuRobo model (v2 schema), rooted at torso_link. The loader in
+# providers/curobo/service.py rewrites urdf_path to the absolute packaged path.
+robot_cfg:
+  kinematics:
+    format_version: 2.0
+    urdf_path: "g1_dual_arm.urdf"
+    base_link: torso_link
+    tool_frames: [left_grasp, right_grasp]
+    cspace:
+      joint_names:
+        - left_shoulder_pitch_joint
+        - left_shoulder_roll_joint
+        - left_shoulder_yaw_joint
+        - left_elbow_joint
+        - left_wrist_roll_joint
+        - left_wrist_pitch_joint
+        - left_wrist_yaw_joint
+        - right_shoulder_pitch_joint
+        - right_shoulder_roll_joint
+        - right_shoulder_yaw_joint
+        - right_elbow_joint
+        - right_wrist_roll_joint
+        - right_wrist_pitch_joint
+        - right_wrist_yaw_joint
+      default_joint_position: [0.2, 0.2, 0.0, 0.6, 0.0, 0.0, 0.0, 0.2, -0.2, 0.0, 0.6, 0.0, 0.0, 0.0]
+      cspace_distance_weight: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+      max_jerk: 500.0
+      max_acceleration: 15.0
+    collision_spheres:
+      torso_link:
+        - center: [0.0, 0.0, 0.05]
+          radius: 0.08
+        - center: [0.0, 0.0, 0.15]
+          radius: 0.08
+        - center: [0.0, 0.0, 0.25]
+          radius: 0.08
+      head_link:
+        - center: [0.0, 0.0, 0.45]
+          radius: 0.09
+      left_shoulder_pitch_link:
+        - center: [0, 0.04, -0.01]
+          radius: 0.04
+      left_shoulder_roll_link:
+        - center: [0, 0, -0.05]
+          radius: 0.04
+      left_shoulder_yaw_link:
+        - center: [0.01, 0, -0.04]
+          radius: 0.04
+      left_elbow_link:
+        - center: [0.03, 0, -0.005]
+          radius: 0.04
+        - center: [0.08, 0, -0.01]
+          radius: 0.04
+      left_wrist_roll_link:
+        - center: [0.02, 0, 0]
+          radius: 0.04
+      left_wrist_pitch_link:
+        - center: [0.02, 0, 0]
+          radius: 0.04
+      left_wrist_yaw_link:
+        - center: [0.19, 0, 0]
+          radius: 0.06
+      right_shoulder_pitch_link:
+        - center: [0, -0.04, -0.01]
+          radius: 0.04
+      right_shoulder_roll_link:
+        - center: [0, 0, -0.05]
+          radius: 0.04
+      right_shoulder_yaw_link:
+        - center: [0.01, 0, -0.04]
+          radius: 0.04
+      right_elbow_link:
+        - center: [0.03, 0, -0.005]
+          radius: 0.04
+        - center: [0.08, 0, -0.01]
+          radius: 0.04
+      right_wrist_roll_link:
+        - center: [0.02, 0, 0]
+          radius: 0.04
+      right_wrist_pitch_link:
+        - center: [0.02, 0, 0]
+          radius: 0.04
+      right_wrist_yaw_link:
+        - center: [0.19, 0, 0]
+          radius: 0.06
+    self_collision_ignore:
+      torso_link: [left_shoulder_pitch_link, right_shoulder_pitch_link]
+      left_shoulder_pitch_link: [left_shoulder_roll_link]
+      left_shoulder_roll_link: [left_shoulder_yaw_link]
+      left_shoulder_yaw_link: [left_elbow_link]
+      left_elbow_link: [left_wrist_roll_link]
+      left_wrist_roll_link: [left_wrist_pitch_link]
+      left_wrist_pitch_link: [left_wrist_yaw_link]
+      right_shoulder_pitch_link: [right_shoulder_roll_link]
+      right_shoulder_roll_link: [right_shoulder_yaw_link]
+      right_shoulder_yaw_link: [right_elbow_link]
+      right_elbow_link: [right_wrist_roll_link]
+      right_wrist_roll_link: [right_wrist_pitch_link]
+      right_wrist_pitch_link: [right_wrist_yaw_link]
+    self_collision_buffer:
+      torso_link: 0.005
+      head_link: 0.005
+      left_shoulder_pitch_link: 0.005
+      left_shoulder_roll_link: 0.005
+      left_shoulder_yaw_link: 0.005
+      left_elbow_link: 0.005
+      left_wrist_roll_link: 0.005
+      left_wrist_pitch_link: 0.005
+      left_wrist_yaw_link: 0.005
+      right_shoulder_pitch_link: 0.005
+      right_shoulder_roll_link: 0.005
+      right_shoulder_yaw_link: 0.005
+      right_elbow_link: 0.005
+      right_wrist_roll_link: 0.005
+      right_wrist_pitch_link: 0.005
+      right_wrist_yaw_link: 0.005

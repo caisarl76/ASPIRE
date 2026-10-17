@@ -194,6 +194,35 @@ def _yam_real_robot_config() -> str:
     return output.name
 
 
+@functools.lru_cache(maxsize=1)
+def _g1_real_robot_config() -> str:
+    """CuRobo description of the G1 dual arm, rooted at ``torso_link``.
+
+    Cached for the same reason as ``_yam_real_robot_config``: the planner keys its
+    cache on the temp file name, so an uncached builder leaks a planner per request.
+    The YAML is already v2 schema; only ``urdf_path`` is made absolute.
+    """
+    import yaml
+
+    description = Path(__file__).resolve().parents[2] / "g1_real" / "description"
+    configured = os.environ.get("CAP_HARNESS_CUROBO_G1_REAL_CONFIG")
+    source = Path(configured) if configured else description / "curobo" / "g1_dual_arm.yml"
+    if not source.is_file():
+        raise FileNotFoundError(f"G1 real cuRobo config not found: {source}")
+    config = yaml.safe_load(source.read_text(encoding="utf-8"))
+    kinematics = config["robot_cfg"]["kinematics"]
+    urdf = (description / kinematics["urdf_path"]).resolve()
+    if not urdf.is_file():
+        raise FileNotFoundError(f"G1 real URDF not found: {urdf}")
+    kinematics["urdf_path"] = str(urdf)
+    output = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yml", prefix="cap_g1_real_curobo_", delete=False
+    )
+    with output:
+        yaml.safe_dump(config, output, sort_keys=False)
+    return output.name
+
+
 def _yam_real_segmentation_config() -> str:
     """The station model again, but wearing segmentation geometry.
 
@@ -268,6 +297,8 @@ def _robot_config(request: BaseRequest) -> str:
         return os.environ.get("CAP_HARNESS_CUROBO_PANDA_CONFIG", "franka.yml")
     if request.model == "yam_real":
         return _yam_real_robot_config()
+    if request.model == "g1_real":
+        return _g1_real_robot_config()
     value = os.environ.get("CAP_HARNESS_CUROBO_DUAL_CONFIG")
     if value and Path(value).is_file():
         return value
