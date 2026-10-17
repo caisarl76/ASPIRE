@@ -307,3 +307,96 @@ def test_last_command_returns_copies(env):
     q17, lh, rh = env.last_command()
     q17[0] += 1.0
     assert env.last_command()[0][0] != q17[0]
+
+
+def test_batch_publishing_first_after_an_outage_resumes_from_measured():
+    """P1: the re-seed lives in the chokepoint, so a batch that beats the keep-alive
+    to the first fresh publish starts from the measured pose, and the keep-alive
+    afterwards carries the batch's final target instead of stepping back.
+    """
+    e = _lagging_env()
+    try:
+        target = _move_right_shoulder(e, 0.1)
+        e.body.stale = True
+        time.sleep(0.1)
+        # Feedback returns while a batch is about to publish, before the
+        # keep-alive's next wake: holding the stream as a batch does keeps it out.
+        e._streaming = True
+        e.body.stale = False
+        n = len(e.body.commands)
+        measured = e.measured_command()[0]
+        _, left, right = codec.arms_from_upper_body(measured)
+        ahead = right.copy()
+        ahead[0] += 0.02
+        result = e.execute_action_batch(
+            YamActionBatch.joint_abs([0.0, 0.1], [left, left], [right, ahead], source="test"),
+            settle_s=0.0,
+        )
+        assert result["success"] is True
+        sent = np.stack([c[0] for c in e.body.commands[n:]])
+        assert abs(sent[0][4] - target[4]) > 0.05  # not the pre-outage target
+        np.testing.assert_allclose(sent[0], measured, atol=1e-3)
+        assert np.max(np.abs(np.diff(sent, axis=0))) <= 0.03 + 1e-9
+        last = e.body.commands[-1][0]
+        m = len(e.body.commands)
+        time.sleep(0.1)
+        np.testing.assert_array_equal(e.body.commands[m][0], last)
+    finally:
+        e.close()
+
+
+class _SlowHands(FakeBodyClient):
+    """Hands that close a tenth of the remaining gap per observation read."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._slow = {side: np.zeros(7) for side in ("left", "right")}
+
+    def get_observations(self):
+        raw = super().get_observations()
+        for side in ("left", "right"):
+            self._slow[side] += 0.1 * (self._hand_targets[side] - self._slow[side])
+            raw[f"{side}_hand_q"] = self._slow[side].copy()
+        return raw
+
+
+def test_joint_only_batch_holds_a_hand_still_converging_on_its_command():
+    """P2: consecutive scalar reads of a moving hand differ by more than the hold
+    tolerance; the batch must still hold the chain hand, not project a stale read.
+    """
+    cfg = load_g1_station_config("g1-lab")
+    home = codec.upper_body_from_arms(
+        cfg.waist_targets, cfg.arms["left"].home_joints, cfg.arms["right"].home_joints
+    )
+    e = G1Env(cfg, _SlowHands(tau_s=0.01, initial_q17=home), camera=SyntheticCamera())
+    e.engage()
+    try:
+        q = np.array([0.1, 0.2, 0.3, -0.4, -0.5, -0.6, -0.7])
+        assert e.set_hand_joints("left", q)["success"] is True
+        hands = cfg.hands["left"]
+        measured = e.get_observations("left")["gripper_pos"][0]
+        assert abs(measured - codec.hand_scalar(q, hands.open, hands.closed)) > 0.01
+        e.execute_action_batch(
+            YamActionBatch.joint_abs(
+                [0.0],
+                [e.get_observations("left")["joint_pos"]],
+                [e.get_observations("right")["joint_pos"]],
+                source="test",
+            ),
+            settle_s=0.0,
+        )
+        np.testing.assert_allclose(e.body.commands[-1][2], q, atol=1e-9)
+    finally:
+        e.close()
+
+
+def test_go_home_opens_every_hand_joint(env):
+    """P3: thumb_0 is zero in both open and closed, so the scalar cannot see it."""
+    thumb = np.zeros(7)
+    thumb[0] = 0.3
+    assert env.set_hand_joints("left", thumb)["success"] is True
+    hands = env.config.hands["left"]
+    assert codec.hand_scalar(thumb, hands.open, hands.closed) == 1.0
+    assert env.go_home(duration_s=0.1, keep_grippers=False)["success"] is True
+    np.testing.assert_array_equal(env.body.commands[-1][2], np.zeros(7))
+    np.testing.assert_array_equal(env.body.commands[-1][3], np.zeros(7))

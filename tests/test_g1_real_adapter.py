@@ -7,13 +7,14 @@ import time
 import numpy as np
 import pytest
 
-from cap_harness.contracts import RobotAction, Trajectory
+from cap_harness.contracts import ArmCommand, RobotAction, Trajectory
 from cap_harness.errors import ErrorCode
 from cap_harness.g1_real import codec
 from cap_harness.g1_real.adapter import G1RealAdapter
 from cap_harness.g1_real.body_client import FakeBodyClient
 from cap_harness.g1_real.config import load_g1_station_config
 from cap_harness.g1_real.env import G1Env
+from cap_harness.yam_real.action import YamActionBatch
 from cap_harness.yam_real.cameras import SyntheticCamera
 
 
@@ -206,3 +207,63 @@ def test_hand_tools_are_registered_as_g1_extensions(adapter):
         "g1_real.get_controller_metadata",
         "g1_real.get_task_metadata",
     } <= names
+
+
+class _SlowHands(FakeBodyClient):
+    """Hands that close a tenth of the remaining gap per observation read."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._slow = {side: np.zeros(7) for side in ("left", "right")}
+
+    def get_observations(self):
+        raw = super().get_observations()
+        for side in ("left", "right"):
+            self._slow[side] += 0.1 * (self._hand_targets[side] - self._slow[side])
+            raw[f"{side}_hand_q"] = self._slow[side].copy()
+        return raw
+
+
+def test_step_holds_a_hand_still_converging_on_its_command():
+    """P2 on the adapter path: the hold column is the chain scalar, not a stale read."""
+    cfg = load_g1_station_config("g1-lab")
+    env = G1Env(cfg, _SlowHands(tau_s=0.01, initial_q17=_home_q17(cfg)), camera=SyntheticCamera())
+    env.engage()
+    adapter = G1RealAdapter(env, allow_physical_motion=True)
+    try:
+        q = [0.1, 0.2, 0.3, -0.4, -0.5, -0.6, -0.7]
+        assert adapter.set_hand_joints("left", q).ok
+        state = adapter.get_robot_state()
+        hands = cfg.hands["left"]
+        assert (
+            abs(state.gripper_positions["left"] - codec.hand_scalar(q, hands.open, hands.closed))
+            > 0.01
+        )
+        target = state.joint_positions["right"] + np.array([0.02, 0, 0, 0, 0, 0, 0])
+        action = RobotAction({"right": ArmCommand("joint_position", target, embodiment="g1_real")})
+        assert adapter.step(action).ok
+        np.testing.assert_allclose(env.body.commands[-1][2], q, atol=1e-9)
+    finally:
+        adapter.close()
+
+
+def test_single_arm_trajectory_holds_the_idle_arm_at_its_chain_target():
+    """P4: the idle arm holds the chain, not its lagging measurement."""
+    cfg = load_g1_station_config("g1-lab")
+    adapter = _engaged_adapter(cfg, _home_q17(cfg))
+    env = adapter.native_env
+    try:
+        env.body.tau_s = 5.0  # the measured pose stays behind the chain
+        left = cfg.arms["left"].home_joints.copy()
+        left[0] += 0.05
+        result = env.execute_action_batch(
+            YamActionBatch.joint_abs([0.0], [left], [cfg.arms["right"].home_joints], source="test"),
+            settle_s=0.0,
+        )
+        assert result["success"] is True
+        np.testing.assert_allclose(codec.arms_from_upper_body(env.last_command()[0])[1], left)
+        assert abs(env.get_observations("left")["joint_pos"][0] - left[0]) > 0.03
+        adapter.execute_trajectory(_right_trajectory(adapter, 0.05))
+        np.testing.assert_array_equal(codec.arms_from_upper_body(env.last_command()[0])[1], left)
+    finally:
+        adapter.close()

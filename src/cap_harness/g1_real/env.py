@@ -75,6 +75,9 @@ class G1Env:
         self._streaming = False
         # Set while the keep-alive is paused on stale feedback; cleared by a fresh send.
         self._keep_alive_paused = False
+        # Set by a stale refusal in _send_tick; the next fresh publish, whoever
+        # makes it, re-seeds the chain from the measured pose first.
+        self._resume_from_measured = False
         # Set when feedback was lost since the last engage; engage() then runs again.
         self._feedback_lost = False
         self._stop = threading.Event()
@@ -176,18 +179,26 @@ class G1Env:
         """Step the chain toward the goal and publish it, or refuse when feedback is stale.
 
         The joint velocity sent is the step over one period at ``hz`` (the
-        stream rate by default); a holding tick therefore sends zero.
+        stream rate by default); a holding tick therefore sends zero. The first
+        publish after a stale refusal re-seeds the chain from the measured pose
+        before stepping: SONIC idled the arms meanwhile, and this is the one
+        place every publisher passes through.
         """
         with self._lock:
             age = self.body.feedback_age_s()
             limit = self.config.sonic.feedback_stale_s
             if age > limit:
+                self._resume_from_measured = True
                 return {
                     "success": False,
                     "reason": f"feedback stale ({age:.3f} s > {limit:.3f} s)",
                 }
             if self._last_cmd is None:
                 raise RuntimeError("no target chain to step from: call engage() first")
+            if self._resume_from_measured:
+                self._last_cmd = self.measured_command()
+                self._resume_from_measured = False
+                _log.warning("feedback resumed: chain re-seeded from the measured pose")
             prev_q, prev_lh, prev_rh = self._last_cmd
             hands = self.config.hands
             q = step_toward(
@@ -221,14 +232,13 @@ class G1Env:
                 with self._lock:
                     if self._streaming or self._last_cmd is None:
                         continue
-                    if self._keep_alive_paused and self.body.feedback_age_s() <= limit:
-                        # Feedback is back after an outage: SONIC idled the arms
-                        # meanwhile, so resume by holding where they are now, not
-                        # by re-sending the pre-outage target as a one-message jump.
-                        self._last_cmd = self.measured_command()
-                        _log.warning("keep-alive resumed: holding the measured pose")
-                    q17, lh, rh = self._last_cmd
-                    refused = self._send_tick(q17, lh, rh)
+                    goal = self._last_cmd
+                    if self._resume_from_measured and self.body.feedback_age_s() <= limit:
+                        # Feedback is back after an outage: hold where the arms
+                        # are now rather than ramp back to the pre-outage target
+                        # (_send_tick re-seeds the chain itself).
+                        goal = self.measured_command()
+                    refused = self._send_tick(*goal)
             except Exception as exc:
                 _log.warning("keep-alive send failed: %s: %s", type(exc).__name__, exc)
                 continue
@@ -262,6 +272,7 @@ class G1Env:
         self.body.seed_hands(lh, rh)
         with self._lock:
             self._last_cmd = (q17, lh, rh)
+            self._resume_from_measured = False  # seeded from measured just now
         dt = 1.0 / float(self.config.controller.command_stream_hz)
         ticks = max(1, round(float(self.config.sonic.engage_hold_s) / dt))
         self._streaming = True  # the hold is the only publisher meanwhile
@@ -303,11 +314,14 @@ class G1Env:
         """Execute one typed action batch. The only path to the robot.
 
         ``batch.meta["hand_joints"]`` may carry explicit ``{side: (N, 7)}`` rows
-        for a side. Otherwise a hand whose gripper column equals the measured
-        scalar on every row is held as last commanded -- a joint-level grasp
-        must not be projected onto the open/closed line by an arm move -- and
-        only a changed scalar is mapped through ``codec.hand_pose``. The waist
-        holds the profile's target on every tick.
+        for a side. Otherwise a hand is held as last commanded when its gripper
+        is unspecified, or when its column equals the measured scalar or the
+        chain hand's scalar on every row -- a joint-level grasp must not be
+        projected onto the open/closed line by an arm move -- and only a
+        changed scalar is mapped through ``codec.hand_pose``. A hold built from
+        a measurement is racy while the hand still moves (the next feedback
+        message changes the scalar), so holding callers pass the chain scalar
+        or no gripper at all. The waist holds the profile's target on every tick.
 
         Refused before anything is resolved or published when the stream is
         not engaged (nothing would hold the target afterwards), and when a
@@ -315,6 +329,8 @@ class G1Env:
         """
         if (refused := self._not_ready()) is not None:
             return refused
+        if isinstance(batch, dict):
+            batch = YamActionBatch(**batch)
         resolved = resolve_action_batch(self, batch)
         for side, rows in (
             ("left", resolved.left_joint_positions),
@@ -346,9 +362,21 @@ class G1Env:
                 hands[side] = np.asarray(overrides[side], dtype=np.float64).reshape(n, HAND_DOF)
                 continue
             hand = self.config.hands[side]
+            # The resolver fills an unspecified gripper with a measurement; here
+            # "unspecified" itself means hold (a joint7 row may carry its own).
+            unspecified = (
+                getattr(batch, f"{side}_gripper") is None
+                and np.asarray(getattr(batch, side), dtype=np.float64).reshape(n, -1).shape[1]
+                <= self.dof
+            )
             column = np.asarray(scalars[side], dtype=np.float64).reshape(-1)
-            measured = codec.hand_scalar(raw[f"{side}_hand_q"], hand.open, hand.closed)
-            if np.all(np.abs(column - measured) <= HAND_SCALAR_HOLD_TOL):
+            holds = (
+                codec.hand_scalar(raw[f"{side}_hand_q"], hand.open, hand.closed),
+                codec.hand_scalar(held_hand, hand.open, hand.closed),
+            )
+            if unspecified or any(
+                np.all(np.abs(column - s) <= HAND_SCALAR_HOLD_TOL) for s in holds
+            ):
                 hands[side] = np.tile(held_hand, (n, 1))
             else:
                 hands[side] = np.stack([codec.hand_pose(p, hand.open, hand.closed) for p in column])
@@ -389,20 +417,21 @@ class G1Env:
     ) -> dict[str, Any]:
         """Two waypoints: arms held at the chain target, one hand moving to ``target``.
 
-        The window scales with the travel. The other hand's gripper column is
-        its measured scalar, so :meth:`execute_action_batch` holds it verbatim.
+        The window scales with the travel. Both hands go as explicit
+        ``hand_joints`` rows -- the other hand is the chain hand tiled -- so the
+        batch never has to decide whether a scalar column means "hold".
         """
         if (refused := self._not_ready()) is not None:
             return refused
         q17, *held = self.last_command()
         start = held[ARMS.index(side)]
         hand = self.config.hands[side]
-        raw = self._raw()
-        scalars = {
-            name: codec.hand_scalar(raw[f"{name}_hand_q"], cfg.open, cfg.closed)
+        rows = {name: np.tile(h, (2, 1)) for name, h in zip(ARMS, held, strict=True)}
+        rows[side] = np.stack([start, target])
+        columns = {
+            name: [[codec.hand_scalar(r, cfg.open, cfg.closed)] for r in rows[name]]
             for name, cfg in self.config.hands.items()
         }
-        goal = {**scalars, side: codec.hand_scalar(target, hand.open, hand.closed)}
         travel = float(np.max(np.abs(target - start)) / np.max(np.abs(hand.closed - hand.open)))
         duration = (
             max(0.05, travel * HAND_FULL_TRAVEL_S)
@@ -417,10 +446,10 @@ class G1Env:
             [0.0, duration],
             [left, left],
             [right, right],
-            [[scalars["left"]], [goal["left"]]],
-            [[scalars["right"]], [goal["right"]]],
+            columns["left"],
+            columns["right"],
             source=source,
-            meta={"side": side, "hand_joints": {side: np.stack([start, target])}},
+            meta={"side": side, "hand_joints": rows},
         )
         return self.execute_action_batch(batch, settle_s=0.0)
 
@@ -457,21 +486,26 @@ class G1Env:
     def go_home(self, *, duration_s: float = 3.0, keep_grippers: bool = True) -> dict[str, Any]:
         """Drive both arms to the profile's home pose with a start interpolation.
 
-        ``keep_grippers`` passes each hand's measured scalar, which
-        :meth:`execute_action_batch` holds as last commanded; otherwise both open.
+        Hands go as explicit ``hand_joints`` rows: the chain hand when
+        ``keep_grippers``, else every joint at ``open`` -- the scalar cannot see
+        a joint that is equal in ``open`` and ``closed`` (the thumb base).
         """
-        observed = {side: self.get_observations(side) for side in ARMS}
-        grippers = {
-            side: (float(observed[side]["gripper_pos"][0]) if keep_grippers else 1.0)
-            for side in ARMS
-        }
+        if (refused := self._not_ready()) is not None:
+            return refused
+        _, *held = self.last_command()
+        hands, columns = {}, {}
+        for side, chain in zip(ARMS, held, strict=True):
+            cfg = self.config.hands[side]
+            hands[side] = chain if keep_grippers else codec.hand_pose(1.0, cfg.open, cfg.closed)
+            columns[side] = [[codec.hand_scalar(hands[side], cfg.open, cfg.closed)]]
         batch = YamActionBatch.joint_abs(
             [0.0],
             [self.config.arms["left"].home_joints],
             [self.config.arms["right"].home_joints],
-            [[grippers["left"]]],
-            [[grippers["right"]]],
+            columns["left"],
+            columns["right"],
             source="cap_home",
+            meta={"hand_joints": {side: hands[side].reshape(1, HAND_DOF) for side in ARMS}},
         )
         return self.execute_action_batch(
             batch, start_interp_s=max(0.0, float(duration_s)), settle_s=0.2

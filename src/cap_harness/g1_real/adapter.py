@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 
-from cap_harness.contracts import ExecutionResult, RobotPlanningContext, TaskContext
+from cap_harness.contracts import ExecutionResult, RobotPlanningContext, RobotState, TaskContext
 from cap_harness.errors import ApiError, ErrorCode
 from cap_harness.g1_real import codec
 from cap_harness.g1_real.registry import G1RealTaskRegistry
@@ -47,6 +47,36 @@ class G1RealAdapter(YamRealAdapter):
         # No calibration bundle on this station: the profile hash attributes an episode.
         config = self._env.config
         return {"station": config.station, "config_sha256": config.config_sha256}
+
+    def _held_joints(self, state: RobotState, side: str) -> np.ndarray:
+        """The chain target for an uncommanded arm, clamped into its limits.
+
+        Under gravity load the measured joints sit a tracking error behind the
+        command; holding the measurement would re-command that sag on every
+        single-arm batch and ratchet the chain downward. Before engage there is
+        no chain, and the measured hold lets the plant refuse the batch itself.
+        """
+        try:
+            q17, _, _ = self._env.last_command()
+        except RuntimeError:
+            return super()._held_joints(state, side)
+        _, left, right = codec.arms_from_upper_body(q17)
+        lower, upper = self._limits(side)
+        return np.clip({"left": left, "right": right}[side], lower, upper)
+
+    def _held_gripper(self, state: RobotState, side: str) -> float:
+        """The chain hand's scalar, which the plant holds verbatim.
+
+        A measured scalar is racy while the hand still moves: the next feedback
+        message changes it, the plant no longer recognises the column as a
+        hold, and a joint-level grasp gets projected onto the open/closed line.
+        """
+        try:
+            _, left, right = self._env.last_command()
+        except RuntimeError:
+            return super()._held_gripper(state, side)
+        hand = self._env.config.hands[side]
+        return codec.hand_scalar({"left": left, "right": right}[side], hand.open, hand.closed)
 
     # -- hands -------------------------------------------------------------
 

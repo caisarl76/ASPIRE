@@ -482,6 +482,10 @@ class YamRealAdapter:
             upper,
         )
 
+    def _held_gripper(self, state: RobotState, side: str) -> float:
+        """The measured gripper scalar as a hold target (the plant holds it verbatim)."""
+        return float(state.gripper_positions[side])
+
     def _submit(
         self,
         joints: Mapping[str, np.ndarray],
@@ -500,7 +504,7 @@ class YamRealAdapter:
         # the derived hold target is clamped; a caller's own target is passed
         # through untouched and refused if it is genuinely out of range.
         held = {side: self._held_joints(state, side) for side in self.arms}
-        held_grip = {side: float(state.gripper_positions[side]) for side in self.arms}
+        held_grip = {side: self._held_gripper(state, side) for side in self.arms}
         targets = {side: joints.get(side, held[side]) for side in self.arms}
         grips = {
             side: held_grip[side] if grippers.get(side) is None else float(grippers[side])
@@ -621,7 +625,7 @@ class YamRealAdapter:
             # refuse the other arm's whole trajectory.
             return np.tile(self._held_joints(state, side), (steps, 1))
 
-        held_grip = {side: float(state.gripper_positions[side]) for side in self.arms}
+        held_grip = {side: self._held_gripper(state, side) for side in self.arms}
 
         def gripper_rows(side: str) -> list[list[float]]:
             """The trajectory's own gripper column, or the held width if it has none.
