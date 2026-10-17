@@ -1,7 +1,8 @@
-"""Live robot model, camera views, and Home control for the existing CAP session."""
+"""Robot model (when a URDF is given), camera views, and Home/Engage buttons for the CAP session."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import logging
 from pathlib import Path
 import threading
@@ -16,6 +17,8 @@ from .session import LiveAgentSession, SessionBusyError
 
 logger = logging.getLogger(__name__)
 
+YAM_STATION_URDF = Path(__file__).resolve().parents[1] / "yam_real/description/station/station.urdf"
+
 
 class System2Visualizer:
     """Read the session cache and submit Home through its serialized job queue."""
@@ -27,9 +30,13 @@ class System2Visualizer:
         allow_motion: bool = False,
         host: str = "127.0.0.1",
         port: int = 8080,
+        urdf_path: Path | None = YAM_STATION_URDF,
+        engage: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self._session = session
         self._allow_motion = allow_motion
+        self._engage_fn = engage
+        self._engage_thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._lock = threading.RLock()
         self._images: dict[str, Any] = {}
@@ -42,15 +49,15 @@ class System2Visualizer:
             raise RuntimeError(f"Visualizer port {port} is occupied; choose --viser-port.")
         self.server.scene.set_up_direction("+z")
         self._robot_root = self.server.scene.add_frame("/robot", show_axes=False, visible=False)
-        model_path = (
-            Path(__file__).resolve().parents[1] / "yam_real/description/station/station.urdf"
-        )
-        try:
-            self._robot = ViserUrdf(self.server, model_path, root_node_name="/robot")
-        except BaseException:
-            self.server.stop()
-            raise
-        self._joint_limits = self._robot.get_actuated_joint_limits()
+        self._robot: ViserUrdf | None = None
+        self._joint_limits: dict[str, Any] = {}
+        if urdf_path is not None:
+            try:
+                self._robot = ViserUrdf(self.server, urdf_path, root_node_name="/robot")
+            except BaseException:
+                self.server.stop()
+                raise
+            self._joint_limits = self._robot.get_actuated_joint_limits()
         self.server.on_client_connect(self._set_initial_view)
         self.server.gui.configure_theme(
             control_layout="fixed",
@@ -63,6 +70,13 @@ class System2Visualizer:
             disabled=not allow_motion,
             hint="Open both grippers and return both arms to their configured home pose.",
         )
+        if engage is not None:
+            self._engage = self.server.gui.add_button(
+                "Engage SONIC",
+                disabled=not allow_motion,
+                hint="Hold the measured pose on the command stream, then send SONIC start.",
+            )
+            self._engage.on_click(self._on_engage)
         self._status = self.server.gui.add_markdown("Waiting for camera frames.")
         self._home.on_click(self._on_home)
         self._thread = threading.Thread(target=self._run, name="cap-viser", daemon=True)
@@ -76,6 +90,8 @@ class System2Visualizer:
 
     def _refresh_robot(self, snapshot: dict[str, Any]) -> bool:
         """Map measured telemetry onto the packaged model without querying hardware."""
+        if self._robot is None:
+            return False
         state = snapshot.get("state", {})
         values: dict[str, float] = {}
         age_s = snapshot.get("age_s")
@@ -119,6 +135,28 @@ class System2Visualizer:
                     "The Home job ends the current task; wait for a new operator task."
                 )
 
+    def _on_engage(self, _event: Any) -> None:
+        with self._lock:
+            if self._stop.is_set() or not self._allow_motion or self._engage_fn is None:
+                return
+            if self._engage_thread is not None and self._engage_thread.is_alive():
+                return
+            self._engage.disabled = True
+            self._engage_thread = threading.Thread(
+                target=self._run_engage, name="cap-viser-engage", daemon=True
+            )
+            self._engage_thread.start()
+
+    def _run_engage(self) -> None:
+        try:
+            notice = f"Engage: {self._engage_fn()}"
+        except Exception as exc:
+            notice = f"Engage failed: {exc}"
+        with self._lock:
+            self._notice = notice
+            if not self._stop.is_set():
+                self._engage.disabled = not self._allow_motion
+
     def _refresh(self) -> None:
         snapshot = self._session.cached_visual_snapshot()
         cameras = snapshot["cameras"]
@@ -157,7 +195,7 @@ class System2Visualizer:
                         handle.image = np.asarray(image)
                     self._image_sequences[name] = sequence
             status = "Live camera views." if cameras else "Waiting for camera frames."
-            if not robot_live:
+            if self._robot is not None and not robot_live:
                 status += " Robot model hidden: waiting for fresh joint state."
             if not self._allow_motion:
                 status += " Home is disabled: observation-only server."

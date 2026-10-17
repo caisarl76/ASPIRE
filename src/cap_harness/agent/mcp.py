@@ -193,16 +193,19 @@ def _encode_jpeg(frame: np.ndarray, *, max_side: int = 960) -> str:
     return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
-_DIRECT = {
-    "get_robot_state",
-    "localize_object",
-    "move_to_joints",
-    "move_to_pose",
-    "move_synchronized",
-    "set_gripper",
-    "yam_real.get_controller_metadata",
-}
-_READ_ONLY = {"get_robot_state", "localize_object", "yam_real.get_controller_metadata"}
+_DIRECT_BASE = frozenset(
+    {
+        "get_robot_state",
+        "localize_object",
+        "move_to_joints",
+        "move_to_pose",
+        "move_synchronized",
+        "set_gripper",
+    }
+)
+_READ_ONLY_BASE = frozenset({"get_robot_state", "localize_object"})
+_DIRECT_EXTENSIONS = (".get_controller_metadata", ".set_hand_joints", ".get_hand_state")
+_READ_ONLY_EXTENSIONS = (".get_controller_metadata", ".get_hand_state")
 
 
 def _jsonable(value: Any, *, _active: set[int] | None = None) -> Any:
@@ -233,16 +236,20 @@ class CapMcpBridge:
     def __init__(self, session: LiveAgentSession) -> None:
         self.session = session
         configured = session.api.configured_providers
-        allowed = set(_DIRECT)
+        public = session.registry.all_specs(public_only=True)
+        allowed = set(_DIRECT_BASE) | {
+            spec.name for spec in public if spec.name.endswith(_DIRECT_EXTENSIONS)
+        }
+        self._read_only = set(_READ_ONLY_BASE) | {
+            spec.name for spec in public if spec.name.endswith(_READ_ONLY_EXTENSIONS)
+        }
         if not configured["segmentation"]:
             allowed.discard("localize_object")
         if not configured["ik"] and not configured["pose_planning"]:
             allowed.discard("move_to_pose")
         self._default_ik = next(iter(configured["ik"]), "pyroki")
         self._direct = {
-            "cap_" + spec.name.replace(".", "__"): spec
-            for spec in session.registry.all_specs(public_only=True)
-            if spec.name in allowed
+            "cap_" + spec.name.replace(".", "__"): spec for spec in public if spec.name in allowed
         }
 
     def tool_specs(self) -> list[Any]:
@@ -402,7 +409,7 @@ class CapMcpBridge:
             args["strategy"] = MotionStrategy(
                 **{"ik_solver": self._default_ik, **(args.get("strategy") or {})}
             )
-        if spec.name in _READ_ONLY:
+        if spec.name in self._read_only:
             result = spec.function(**args)
             return {"ok": bool(getattr(result, "ok", True)), "result": _compact_summary(result)}, {}
         value = self._terminal(self.session.start_tool(spec.name, args))
