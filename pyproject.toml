@@ -38,6 +38,14 @@ yam-real = [
   "mujoco==3.3.0",
   "pyrealsense2>=2.55",
 ]
+g1-real = [
+  "imageio[ffmpeg]>=2.34",
+  "mink>=0.0.4",
+  "mujoco==3.3.0",
+  "pyzmq>=25",
+  "msgpack>=1.0",
+  "msgpack-numpy>=0.4.8",
+]
 yam-real-server = [
   "damiao-motor>=1.0.7b1",
 ]
