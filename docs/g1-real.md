@@ -192,7 +192,7 @@ Pending operator run. `scripts/g1_tracking_acceptance.py` (Task 15) automates it
 | Test | Pass criterion | Result |
 | --- | --- | --- |
 | Hold the upper-body target 5 s | max per-joint error <= 0.05 rad, both arms | ______ |
-| Ten 0.3 m `move_to_pose` segments at 0.1 m/s | final EE error <= 1.5 cm and <= 5 deg; no 0.10 rad residual failure | ______ |
+| Ten 0.15 m straight-line segments (default `--segment-m 0.15`; 0.3 m is unreachable along torso X from home on the G1, and even 0.15 m only works retracting first, so segments alternate -X then +X); speed is logged per segment, not enforced, because the interpolation planner ignores `time_dilation_factor` | final EE error <= 1.5 cm and <= 5 deg; no 0.10 rad residual failure | ______ |
 | Hold a 300 g object | repeat the 5 s hold, error <= 0.05 rad | ______ |
 
 If tracking fails, tune by editing the arm kp/kd constants in the fork's

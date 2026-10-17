@@ -58,3 +58,15 @@ def test_fake_hold_writes_json(tmp_path):
     assert "PASS" in proc.stdout
     (path,) = tmp_path.glob("*.json")
     assert json.loads(path.read_text())["verdict"] == "PASS"
+
+
+def test_fake_segments_default_length(tmp_path):
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    proc = subprocess.run(
+        [sys.executable, "scripts/g1_tracking_acceptance.py", "--fake", "--phase", "segments",
+         "--output-dir", str(tmp_path)],
+        cwd=ROOT, env=env, capture_output=True, text=True, timeout=300,
+    )  # fmt: skip
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    (path,) = tmp_path.glob("*.json")
+    assert len(json.loads(path.read_text())["segments"]) == 10

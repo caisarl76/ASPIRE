@@ -363,7 +363,7 @@ On the real robot, SONIC path:
 
 1. Hold a fixed upper-body target 5 s; compare `body_q` to target.
    Pass: max per-joint error ≤ 0.05 rad on both arms.
-2. Ten 0.3 m straight-line `move_to_pose` segments at 0.1 m/s; EE error from
+2. Ten 0.15 m (amended during implementation: 0.3 m is unreachable from home; see ruling R20 in the plan ledger) straight-line `move_to_pose` segments at 0.1 m/s; EE error from
    FK of measured joints. Pass: ≤ 1.5 cm, ≤ 5°, no 0.10 rad residual failure.
 3. Hold a 300 g bottle 30 s; repeat test 1.
 

@@ -4,7 +4,7 @@ WARNING: this MOVES THE ROBOT. Run it only after the runbook preflight
 (docs/g1-real.md), with the operator ready: keyboard ``O`` on PC2 is the e-stop.
 
 Phases: ``hold`` (5 s of the measured pose, joint drift <= 0.05 rad), ``segments``
-(ten 0.3 m torso-X moves on the primary arm, <= 1.5 cm and <= 5 deg), ``loaded``
+(ten 0.15 m torso-X moves on the primary arm, <= 1.5 cm and <= 5 deg), ``loaded``
 (``hold`` with a 300 g object in the primary hand). ``--fake`` runs the plumbing
 against the fake body. Exit 0 PASS, 1 FAIL, 2 setup error.
 """
@@ -71,7 +71,7 @@ def run_segments(env, segment_m: float) -> dict:
         obs = env.get_observations(side)
         start = obs["ee_pos"]
         quat_wxyz = np.roll(obs["ee_quat"], 1)
-        sign = 1.0 if i % 2 == 0 else -1.0
+        sign = -1.0 if i % 2 == 0 else 1.0  # retract first: forward is out of reach from home
         target = Pose(start + np.array([sign * segment_m, 0.0, 0.0]), quat_wxyz, "torso")
         t0 = time.monotonic()
         result = api.move_to_pose(target, arm=side, strategy=strategy)
@@ -116,7 +116,12 @@ def main() -> int:
     ap.add_argument("--station-config-root")
     ap.add_argument("--phase", required=True, choices=["hold", "segments", "loaded"])
     ap.add_argument("--output-dir", type=Path, default=Path("outputs/g1-acceptance"))
-    ap.add_argument("--segment-m", type=float, default=0.3, help="segment length (spec: 0.3)")
+    ap.add_argument(
+        "--segment-m",
+        type=float,
+        default=0.15,
+        help="segment length (0.3 is unreachable from home)",
+    )
     ap.add_argument("--fake", action="store_true", help="use the fake body (no robot)")
     args = ap.parse_args()
 
