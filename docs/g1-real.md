@@ -161,9 +161,9 @@ Observed: `/health` returned `{"ok":true,"job":null}`; the tool list holds
 final left `gripper_positions` is 0.0175 (1.0 is open). The script exits 0 and prints `OK`.
 
 Note: on g1_real `move_to_pose` reports task-space errors, not `joint_residual_rad`;
-only `cap_program_go_home` does. The "residual < 0.10" gate in the sim2sim step
-therefore reads `position_error_m` / `orientation_error_rad` for the move (the smoke
-script requires < 0.01 m and < 0.10 rad). The smoke script moves whatever server it is
+only `cap_program_go_home` does. The sim2sim step therefore gates the move on
+`position_error_m` < 0.01, `orientation_error_rad` < 0.10 and `joint_target_converged`
+(the smoke script requires the same). The smoke script moves whatever server it is
 pointed at: re-run it against the real server only with the operator ready.
 
 ### Sim2sim (SONIC MuJoCo loop)
@@ -180,7 +180,8 @@ Pending operator run (checklist for Task 14).
    `scripts/start_system2.sh --benchmark g1_real --station g1-sim --station-config-root <copy-root> --allow-motion --engage`
    against that profile.
 5. Expect `home_verified: true` and a right-arm `move_to_pose` with
-   `joint_residual_rad.right < 0.10`.
+   `position_error_m < 0.01`, `orientation_error_rad < 0.10` and
+   `joint_target_converged: true`.
 
 Result: ______
 
