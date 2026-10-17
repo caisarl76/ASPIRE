@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 
 from cap_harness.contracts import ExecutionResult, RobotPlanningContext, TaskContext
+from cap_harness.errors import ApiError, ErrorCode
 from cap_harness.g1_real import codec
 from cap_harness.g1_real.registry import G1RealTaskRegistry
 from cap_harness.yam_real.adapter import YamRealAdapter
@@ -55,6 +56,16 @@ class G1RealAdapter(YamRealAdapter):
         if denied is not None:
             return self._denied_execution(denied)
         side = self.resolve_arm(arm)
+        # Same guard as ``step``: an unknown arm must fail as a typed refusal
+        # before anything is counted or recorded, not as a ValueError later.
+        if side not in self.arms:
+            return self._denied_execution(
+                ApiError(
+                    code=ErrorCode.INVALID_REQUEST,
+                    message=f"no arm {arm!r} on this {self.embodiment} station",
+                    details={"known_arms": list(self.arms)},
+                )
+            )
         self._before_command()
         try:
             result = self._env.set_hand_joints(side, joints)
@@ -73,10 +84,15 @@ class G1RealAdapter(YamRealAdapter):
                 "command_rpc_count": self._command_rpc_count,
             },
         )
-        # The recorder's action space is the gripper scalar, so the commanded
-        # hand pose is recorded as its projection onto the open/closed line.
-        gripper = float(np.asarray(self._env.get_observations(side)["gripper_pos"]).reshape(-1)[0])
-        self._record(execution, gripper={side: gripper})
+        # The recorder's action space is the gripper scalar, so the COMMANDED
+        # hand pose is recorded as its projection onto the open/closed line --
+        # never the measured one, which still reads open while the hand closes.
+        # A refused command commanded nothing, so it falls back to measured.
+        gripper = None
+        if execution.ok:
+            hand = self._env.config.hands[side]
+            gripper = {side: codec.hand_scalar(joints, hand.open, hand.closed)}
+        self._record(execution, gripper=gripper)
         return execution
 
     def get_hand_state(self) -> dict[str, list[float]]:

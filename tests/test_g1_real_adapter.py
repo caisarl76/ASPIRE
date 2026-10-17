@@ -7,7 +7,7 @@ import time
 import numpy as np
 import pytest
 
-from cap_harness.contracts import Trajectory
+from cap_harness.contracts import RobotAction, Trajectory
 from cap_harness.errors import ErrorCode
 from cap_harness.g1_real import codec
 from cap_harness.g1_real.adapter import G1RealAdapter
@@ -122,6 +122,51 @@ def test_hand_tool_maps_a_plant_refusal_to_an_error(adapter):
     assert not result.ok
     assert result.error.code == ErrorCode.EXECUTION_FAILED
     assert "outside the profile limits" in result.error.message
+
+
+def test_hand_tool_refuses_an_unknown_arm_before_any_rpc(adapter):
+    published = len(adapter.native_env.body.commands)
+    result = adapter.set_hand_joints("wrist", [0.0] * 7)
+    assert not result.ok
+    assert result.error.code == ErrorCode.INVALID_REQUEST
+    assert adapter.command_rpc_count == 0
+    assert len(adapter.native_env.body.commands) == published
+
+
+class CapturingObserver:
+    def __init__(self) -> None:
+        self.actions: list[RobotAction] = []
+
+    def before_step(self, action: RobotAction) -> None:
+        pass
+
+    def after_step(self, action: RobotAction, result: object) -> None:
+        self.actions.append(action)
+
+    def on_reset(self, observation: object, metadata: object) -> None:
+        pass
+
+
+def test_hand_tool_records_the_commanded_openness_not_the_measured_one():
+    """A closed-hand command must be recorded as closed, even while the hand is still open."""
+    cfg = load_g1_station_config("g1-lab")
+    observer = CapturingObserver()
+    env = G1Env(
+        cfg, FakeBodyClient(tau_s=0.01, initial_q17=_home_q17(cfg)), camera=SyntheticCamera()
+    )
+    env.engage()
+    adapter = G1RealAdapter(env, allow_physical_motion=True, run_observer=observer)
+    try:
+        q = [0.0, 0.0, 1.0, -1.0, -1.0, -1.0, -1.0]
+        assert adapter.set_hand_joints("left", q).ok
+    finally:
+        adapter.close()
+    hand = cfg.hands["left"]
+    expected = codec.hand_scalar(q, hand.open, hand.closed)
+    assert observer.actions
+    recorded = observer.actions[-1].arms["left"].gripper_position
+    assert recorded == pytest.approx(expected)
+    assert recorded < 0.5, f"recorded the measured (open) hand, {recorded}, not the command"
 
 
 def test_metadata(adapter):
