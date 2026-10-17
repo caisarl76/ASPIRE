@@ -203,3 +203,107 @@ def test_control_contract_names_the_planner_stream(env):
     assert contract["version"] == "g1-sonic-v1-planner-stream"
     assert contract["command_stream_hz"] == 50.0
     assert contract["station"] == "g1-lab"
+
+
+def _lagging_env(tau_s=5.0):
+    """An engaged env over a fake so slow the measured pose stays behind the chain."""
+    cfg = load_g1_station_config("g1-lab")
+    home = codec.upper_body_from_arms(
+        cfg.waist_targets, cfg.arms["left"].home_joints, cfg.arms["right"].home_joints
+    )
+    e = G1Env(cfg, FakeBodyClient(tau_s=tau_s, initial_q17=home), camera=SyntheticCamera())
+    e.engage()
+    return e
+
+
+def _move_right_shoulder(e, delta):
+    left = e.config.arms["left"].home_joints
+    right = e.config.arms["right"].home_joints.copy()
+    right[0] += delta
+    result = e.execute_action_batch(
+        YamActionBatch.joint_abs([0.0], [left], [right], source="test"), settle_s=0.0
+    )
+    assert result["success"] is True
+    return codec.upper_body_from_arms(e.config.waist_targets, left, right)
+
+
+def test_joint_only_batch_keeps_an_off_line_hand_verbatim(env):
+    q = np.array([0.1, 0.2, 0.3, -0.4, -0.5, -0.6, -0.7])
+    hands = env.config.hands["left"]
+    projected = codec.hand_pose(
+        codec.hand_scalar(q, hands.open, hands.closed), hands.open, hands.closed
+    )
+    assert not np.allclose(projected, q, atol=1e-3)
+    assert env.set_hand_joints("left", q)["success"] is True
+    time.sleep(0.1)
+    right = env.get_observations("right")["joint_pos"].copy()
+    right[0] += 0.05
+    env.execute_action_batch(
+        YamActionBatch.joint_abs(
+            [0.0], [env.get_observations("left")["joint_pos"]], [right], source="test"
+        ),
+        settle_s=0.0,
+    )
+    np.testing.assert_allclose(env.body.commands[-1][2], q, atol=1e-9)
+    np.testing.assert_allclose(env.last_command()[1], q, atol=1e-9)
+
+
+def test_keep_alive_resumes_from_measured_after_an_outage():
+    e = _lagging_env()
+    try:
+        target = _move_right_shoulder(e, 0.1)
+        np.testing.assert_array_equal(e.last_command()[0], target)
+        e.body.stale = True
+        time.sleep(0.1)
+        n = len(e.body.commands)
+        time.sleep(0.05)
+        assert len(e.body.commands) == n  # paused, nothing sent blind
+        e.body.stale = False
+        time.sleep(0.1)
+        resumed = e.body.commands[n][0]
+        measured = e.measured_command()[0]
+        assert abs(resumed[4] - target[4]) > 0.05  # not the pre-outage target
+        np.testing.assert_allclose(resumed, measured, atol=0.01)
+    finally:
+        e.close()
+
+
+def test_batch_starting_at_the_chain_target_does_not_step_back():
+    e = _lagging_env()
+    try:
+        _move_right_shoulder(e, 0.1)
+        target = e.last_command()[0]  # the chain (float32-exact, as resolved rows are)
+        assert abs(e.measured_command()[0][4] - target[4]) > 0.05  # measurement lags
+        n = len(e.body.commands)
+        _, left, right = codec.arms_from_upper_body(target)
+        ahead = right.copy()
+        ahead[0] += 0.01
+        e.execute_action_batch(
+            YamActionBatch.joint_abs([0.0, 0.1], [left, left], [right, ahead], source="test"),
+            settle_s=0.0,
+        )
+        sent = [c[0] for c in e.body.commands[n:]]
+        # The first tick samples at t = a few microseconds along the forward
+        # segment, so it sits on the chain target, never below it.
+        np.testing.assert_allclose(sent[0], target, atol=1e-6)
+        assert all(q[4] >= target[4] for q in sent)
+    finally:
+        e.close()
+
+
+def test_engage_runs_again_after_feedback_loss(env):
+    assert env.body.start_count == 1
+    assert env.body.seeded_hands is not None
+    env.body.stale = True
+    time.sleep(0.1)
+    env.body.stale = False
+    again = env.engage()
+    assert again["already_engaged"] is False and env.body.start_count == 2
+    assert env.engage()["already_engaged"] is True and env.body.start_count == 2
+    assert env.keep_alive_running
+
+
+def test_last_command_returns_copies(env):
+    q17, lh, rh = env.last_command()
+    q17[0] += 1.0
+    assert env.last_command()[0][0] != q17[0]

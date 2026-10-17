@@ -7,8 +7,10 @@ whole body, balance included. There is no PD layer of ours underneath, so this
 is also where the per-tick joint step is bounded: SONIC tracks whatever it is
 sent, and a target that jumps is a joint that jumps.
 
-Every publish goes through ``env._send_tick`` so the stale-feedback refusal and
-the publish lock live in one place, shared with the keep-alive.
+Every publish goes through ``env._send_tick``, which owns the emitted-target
+chain: it steps the last emitted target toward the goal it is handed under the
+joint and hand step limits, so the stale-feedback refusal, the publish lock and
+the clamp live in one place, shared with the keep-alive and the engage hold.
 """
 
 from __future__ import annotations
@@ -42,7 +44,7 @@ def _rows(
     return np.hstack([q17, left_hand, right_hand])
 
 
-def _step_toward(prev: np.ndarray, target: np.ndarray, max_step: float) -> np.ndarray:
+def step_toward(prev: np.ndarray, target: np.ndarray, max_step: float) -> np.ndarray:
     """Move at most ``max_step`` per joint toward ``target``; land exactly on it when in reach."""
     delta = target - prev
     if np.all(np.abs(delta) <= max_step):
@@ -92,25 +94,31 @@ def execute_upper_body_trajectory(
     duration_s = float(ts[-1])
     hz = max(1.0, float(command_hz))
     dt = 1.0 / hz
-    max_step = float(env.config.controller.max_joint_step_rad)
+    hands = env.config.hands
+    # Per-column step limits over one (31,) row; the env clamps with the same values.
+    max_step = np.concatenate(
+        [
+            np.full(UPPER_BODY_DOF, float(env.config.controller.max_joint_step_rad)),
+            np.full(HAND_DOF, float(hands["left"].max_step_rad)),
+            np.full(HAND_DOF, float(hands["right"].max_step_rad)),
+        ]
+    )
 
-    measured_q17, measured_lh, measured_rh = env.measured_command()
-    # Start interpolation is one more waypoint: where the robot is, at t=0.
+    def emitted() -> np.ndarray:
+        return np.concatenate(env.last_command())
+
+    # Start interpolation is one more waypoint at t=0: the chain target, i.e.
+    # where the robot is commanded to be, so the first tick never steps back
+    # toward a lagging measurement.
     interp_s = max(0.0, float(start_interp_s))
     if interp_s > 1e-9:
         ts = np.concatenate([[0.0], ts + interp_s])
-        rows = np.vstack([np.concatenate([measured_q17, measured_lh, measured_rh]), rows])
+        rows = np.vstack([emitted(), rows])
     stream_s = float(ts[-1])
-
-    prev = measured_q17.copy()
     final = rows[-1]
 
-    def tick(row: np.ndarray, *, hold: bool = False) -> dict[str, Any] | None:
-        nonlocal prev
-        q17 = prev if hold else _step_toward(prev, row[_Q17], max_step)
-        refused = env._send_tick(q17, (q17 - prev) * hz, row[_LEFT_HAND], row[_RIGHT_HAND])
-        prev = q17
-        return refused
+    def tick(row: np.ndarray) -> dict[str, Any] | None:
+        return env._send_tick(row[_Q17], row[_LEFT_HAND], row[_RIGHT_HAND], hz=hz)
 
     t0 = time.monotonic()
     command_count = 0
@@ -125,10 +133,10 @@ def execute_upper_body_trajectory(
         time.sleep(dt)
 
     # Catch-up: the step clamp can leave the emitted target behind the final
-    # waypoint when the trajectory was faster than max_joint_step_rad allows.
+    # waypoint when the trajectory was faster than the step limits allow.
     catch_up_ticks = 0
-    bound = math.ceil(float(np.max(np.abs(final[_Q17] - prev))) / max_step) + 1
-    while not np.array_equal(prev, final[_Q17]) and catch_up_ticks < bound:
+    bound = math.ceil(float(np.max(np.abs(final - emitted()) / max_step))) + 1
+    while not np.array_equal(emitted(), final) and catch_up_ticks < bound:
         _raise_if_stopped("during catch-up", dt)
         time.sleep(dt)
         if (refused := tick(final)) is not None:
@@ -138,7 +146,7 @@ def execute_upper_body_trajectory(
     for _ in range(max(0, round(max(0.0, float(settle_s)) / dt))):
         _raise_if_stopped("during settle", dt)
         time.sleep(dt)
-        if (refused := tick(final, hold=True)) is not None:
+        if (refused := tick(emitted())) is not None:
             return refused
 
     return {
@@ -155,4 +163,4 @@ def execute_upper_body_trajectory(
     }
 
 
-__all__ = ["execute_upper_body_trajectory"]
+__all__ = ["execute_upper_body_trajectory", "step_toward"]
