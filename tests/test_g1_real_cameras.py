@@ -111,3 +111,41 @@ def test_undecodable_messages_are_dropped_and_keep_last_good_frame():
     assert cam.read() is good
     cam.close()
     pub.close()
+
+
+def test_depth_without_intrinsics_is_dropped_to_nan():
+    cam = ComposedCameraRgbd("127.0.0.1", 5735)
+    pub = _publish(
+        5735,
+        {
+            "images": {
+                "ego_view": np.zeros((4, 4, 3), np.uint8),
+                "ego_view_depth": np.full((4, 4), 1500, np.uint16),
+            }
+        },
+    )
+    frame = _read(cam)
+    assert frame is not None and np.isnan(frame.depth_m).all()
+    assert cam.depth_missing and cam.intrinsics_missing
+    cam.close()
+    pub.close()
+
+
+def test_depth_shape_mismatch_is_dropped_to_nan():
+    cam = ComposedCameraRgbd("127.0.0.1", 5736)
+    pub = _publish(
+        5736,
+        {
+            "images": {
+                "ego_view": np.zeros((4, 4, 3), np.uint8),
+                "ego_view_depth": np.full((2, 2), 1500, np.uint16),
+            },
+            "intrinsics": {"ego_view": INTR},
+        },
+    )
+    frame = _read(cam)
+    assert frame is not None and frame.depth_m.shape == (4, 4) and np.isnan(frame.depth_m).all()
+    assert cam.depth_missing and not cam.intrinsics_missing
+    assert frame.intrinsics[0, 0] == 600.0
+    cam.close()
+    pub.close()
