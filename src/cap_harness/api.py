@@ -1574,6 +1574,8 @@ class CapApi:
             ("plan_standoff_pose", "geometry"),
             ("plan_approach_pose", "geometry"),
             ("base_pose_is_free", "geometry"),
+            ("set_hand_joints", "control"),
+            ("get_hand_state", "state"),
         )
         for extension_name, capability in extensions:
             function = getattr(self._adapter, extension_name, None)

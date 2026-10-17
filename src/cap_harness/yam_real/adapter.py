@@ -39,12 +39,12 @@ from cap_harness.contracts import (
     Trajectory,
 )
 from cap_harness.errors import ApiError, ErrorCode
-from cap_harness.yam_real import codec
+from cap_harness.yam_real import codec as yam_codec
 from cap_harness.yam_real.action import YamActionBatch
 from cap_harness.yam_real.registry import YamRealTaskMetadata, YamRealTaskRegistry
 
-ARMS = codec.ARMS
-ARM_DOF = codec.ARM_DOF
+ARMS = yam_codec.ARMS
+ARM_DOF = yam_codec.ARM_DOF
 
 #: Held at the final waypoint after a trajectory is streamed, so a
 #: position-controlled arm has time to close the following error it accumulated.
@@ -73,10 +73,14 @@ HOME_DIAGNOSTIC_TOLERANCE_RAD = 0.03
 
 
 class YamRealAdapter:
-    """Protocol-facing wrapper over a YAM station."""
+    """Protocol-facing wrapper over a YAM station.
 
-    embodiment = codec.EMBODIMENT
-    registry_prefix = "yam_real"
+    ``codec`` is the embodiment's joint-order and unit module (``EMBODIMENT``,
+    ``ARMS``, ``ARM_DOF``, ``robot_state``, ``observation``,
+    ``arm_command_targets``). Injecting it is what lets another bimanual
+    station with the same plant chokepoint reuse the interlock, recording and
+    residual checks here unchanged.
+    """
 
     def __init__(
         self,
@@ -86,8 +90,13 @@ class YamRealAdapter:
         task_context: TaskContext | None = None,
         allow_physical_motion: bool = False,
         run_observer: object | None = None,
+        codec: Any = yam_codec,
     ) -> None:
         self._env = env
+        self._codec = codec
+        self.embodiment: str = codec.EMBODIMENT
+        self.registry_prefix: str = codec.EMBODIMENT
+        self.arms: tuple[str, ...] = tuple(codec.ARMS)
         self._registry = registry or YamRealTaskRegistry()
         self._task_context = task_context
         self._allow_physical_motion = bool(allow_physical_motion)
@@ -105,10 +114,6 @@ class YamRealAdapter:
     def native_env(self) -> Any:
         """The plant, mirroring the simulator adapters' ``native_env``."""
         return self._env
-
-    @property
-    def arms(self) -> tuple[str, ...]:
-        return ARMS
 
     def resolve_arm(self, arm: str) -> str:
         """This station's own name for the arm a caller asked for.
@@ -130,13 +135,13 @@ class YamRealAdapter:
         resolver error.
         """
         name = str(arm)
-        if name in ARMS:
+        if name in self.arms:
             return name
         return str(self._env.config.arm_aliases.get(name, name))
 
     @property
     def dof(self) -> int:
-        return ARM_DOF
+        return int(self._codec.ARM_DOF)
 
     @property
     def command_rpc_count(self) -> int:
@@ -161,7 +166,7 @@ class YamRealAdapter:
         return ApiError(
             code=ErrorCode.SAFETY_INTERLOCK,
             message=(
-                "physical motion is not authorized for this YAM adapter; "
+                f"physical motion is not authorized for this {self.embodiment} adapter; "
                 "construct it with allow_physical_motion=True (cap-harness run --allow-motion)"
             ),
             recoverable=False,
@@ -197,7 +202,7 @@ class YamRealAdapter:
         per control period. That is coarser than a simulator's record and it is
         the honest shape for this embodiment.
         """
-        state = codec.robot_state(self._env)
+        state = self._codec.robot_state(self._env)
         return RobotAction(
             arms={
                 side: ArmCommand(
@@ -205,7 +210,7 @@ class YamRealAdapter:
                     target=(
                         state.joint_positions[side]
                         if targets is None or targets.get(side) is None
-                        else np.asarray(targets[side], dtype=np.float64).reshape(ARM_DOF)
+                        else np.asarray(targets[side], dtype=np.float64).reshape(self.dof)
                     ),
                     gripper_position=(
                         state.gripper_positions[side]
@@ -214,7 +219,7 @@ class YamRealAdapter:
                     ),
                     embodiment=self.embodiment,
                 )
-                for side in ARMS
+                for side in self.arms
             }
             # No `embodiment=` here: RobotAction takes only `arms` and derives
             # the embodiment from the commands, which must all agree.
@@ -314,19 +319,7 @@ class YamRealAdapter:
         if isinstance(task_ref, TaskContext):
             self._task_context = task_ref
         elif isinstance(task_ref, YamRealTaskMetadata):
-            self._task_context = TaskContext(
-                suite=task_ref.suite_name,
-                task_id=task_ref.task_id,
-                task_name=task_ref.task_name,
-                language=task_ref.language,
-                family=task_ref.family,
-                metadata={
-                    "scene_reset": task_ref.scene_reset,
-                    "seed": int(seed),
-                    "station": self._env.config.station,
-                    "calibration_bundle": self._env.config.calibration.bundle_id,
-                },
-            )
+            self._task_context = self._task_context_for(task_ref, seed)
         elif task_ref is not None:
             self._task_context = self._task_context_for(self._registry.resolve(task_ref), seed)
 
@@ -351,7 +344,7 @@ class YamRealAdapter:
             metadata.update(
                 {
                     "embodiment": self.embodiment,
-                    "station": self._env.config.station,
+                    **self._provenance(),
                     "physical_motion_authorized": self._allow_physical_motion,
                 }
             )
@@ -395,8 +388,7 @@ class YamRealAdapter:
             recorder.start(
                 self._env,
                 meta={
-                    "station": self._env.config.station,
-                    "calibration_bundle": self._env.config.calibration.bundle_id,
+                    **self._provenance(),
                     "physical_motion_authorized": self._allow_physical_motion,
                 },
             )
@@ -422,6 +414,11 @@ class YamRealAdapter:
         except Exception:
             pass
 
+    def _provenance(self) -> dict[str, Any]:
+        """What identifies the station in a task context and a recorded episode."""
+        config = self._env.config
+        return {"station": config.station, "calibration_bundle": config.calibration.bundle_id}
+
     def _task_context_for(self, metadata: YamRealTaskMetadata, seed: int) -> TaskContext:
         return TaskContext(
             suite=metadata.suite_name,
@@ -429,12 +426,7 @@ class YamRealAdapter:
             task_name=metadata.task_name,
             language=metadata.language,
             family=metadata.family,
-            metadata={
-                "scene_reset": metadata.scene_reset,
-                "seed": int(seed),
-                "station": self._env.config.station,
-                "calibration_bundle": self._env.config.calibration.bundle_id,
-            },
+            metadata={"scene_reset": metadata.scene_reset, "seed": int(seed), **self._provenance()},
         )
 
     def close(self) -> None:
@@ -453,10 +445,10 @@ class YamRealAdapter:
         return self._task_context
 
     def get_observation(self) -> Observation:
-        return codec.observation(self._env, task_context=self._task_context)
+        return self._codec.observation(self._env, task_context=self._task_context)
 
     def get_robot_state(self) -> RobotState:
-        return codec.robot_state(self._env)
+        return self._codec.robot_state(self._env)
 
     def check_success(self) -> bool:
         """No task success predicate exists on hardware.
@@ -469,6 +461,27 @@ class YamRealAdapter:
 
     # -- actuation ---------------------------------------------------------
 
+    def _limits(self, side: str) -> tuple[np.ndarray, np.ndarray]:
+        """One arm's commandable joint range.
+
+        YAM's profile carries a single shared vector; G1's carries one per arm
+        under the same attribute names, so both shapes are accepted here.
+        """
+        config = self._env.config
+        lower, upper = config.joint_limits_lower, config.joint_limits_upper
+        if isinstance(lower, Mapping):
+            return lower[side], upper[side]
+        return lower, upper
+
+    def _held_joints(self, state: RobotState, side: str) -> np.ndarray:
+        """The measured pose, clamped into the arm's limits, as a hold target."""
+        lower, upper = self._limits(side)
+        return np.clip(
+            np.asarray(state.joint_positions[side], dtype=np.float64).reshape(self.dof),
+            lower,
+            upper,
+        )
+
     def _submit(
         self,
         joints: Mapping[str, np.ndarray],
@@ -478,7 +491,7 @@ class YamRealAdapter:
         source: str,
     ) -> dict[str, Any]:
         """Build one action batch and push it through the plant's chokepoint."""
-        state = codec.robot_state(self._env)
+        state = self._codec.robot_state(self._env)
         # "Hold where you are" is built from the MEASURED pose, and a measured
         # pose can sit outside the commandable range -- an arm resting against a
         # limit sags a little past it. Commanding that verbatim is rejected by
@@ -486,20 +499,12 @@ class YamRealAdapter:
         # range could never be commanded again, not even to move back in. Only
         # the derived hold target is clamped; a caller's own target is passed
         # through untouched and refused if it is genuinely out of range.
-        config = self._env.config
-        held = {
-            side: np.clip(
-                np.asarray(state.joint_positions[side], dtype=np.float64).reshape(ARM_DOF),
-                config.joint_limits_lower,
-                config.joint_limits_upper,
-            )
-            for side in ARMS
-        }
-        held_grip = {side: float(state.gripper_positions[side]) for side in ARMS}
-        targets = {side: joints.get(side, held[side]) for side in ARMS}
+        held = {side: self._held_joints(state, side) for side in self.arms}
+        held_grip = {side: float(state.gripper_positions[side]) for side in self.arms}
+        targets = {side: joints.get(side, held[side]) for side in self.arms}
         grips = {
             side: held_grip[side] if grippers.get(side) is None else float(grippers[side])
-            for side in ARMS
+            for side in self.arms
         }
         batch = YamActionBatch.joint_abs(
             [0.0, max(1e-3, float(duration_s))],
@@ -517,18 +522,18 @@ class YamRealAdapter:
         denied = self._motion_denied()
         if denied is not None:
             return self._denied_step(denied)
-        joints, grippers = codec.arm_command_targets(action)
+        joints, grippers = self._codec.arm_command_targets(action)
         # ``RobotAction`` does not constrain its arm keys -- it has no start state
         # to check them against -- so a mistyped arm arrives here looking valid.
         # Without this, the unknown entry is dropped, both arms hold their current
         # position, and the step reports success having moved nothing.
-        unknown = set(joints) - set(ARMS)
+        unknown = set(joints) - set(self.arms)
         if unknown:
             return self._denied_step(
                 ApiError(
                     code=ErrorCode.INVALID_REQUEST,
-                    message=f"action names unknown YAM arms: {sorted(unknown)}",
-                    details={"known_arms": list(ARMS)},
+                    message=f"action names unknown {self.embodiment} arms: {sorted(unknown)}",
+                    details={"known_arms": list(self.arms)},
                 )
             )
         self._before_command()
@@ -604,17 +609,19 @@ class YamRealAdapter:
         # ``step`` must check.
 
         dt_s = float(trajectory.dt_s)
-        state = codec.robot_state(self._env)
+        state = self._codec.robot_state(self._env)
         steps = max(len(value) for value in per_arm.values())
         timestamps = [index * dt_s for index in range(steps)]
 
         def rows(side: str) -> np.ndarray:
             if side in per_arm:
-                return per_arm[side][:, :ARM_DOF]
-            held = np.asarray(state.joint_positions[side], dtype=np.float64).reshape(ARM_DOF)
-            return np.tile(held, (steps, 1))
+                return per_arm[side][:, : self.dof]
+            # Clamped like ``_submit``'s hold: the station refuses a row past a
+            # limit, and an uncommanded arm sagging a hair past one must not
+            # refuse the other arm's whole trajectory.
+            return np.tile(self._held_joints(state, side), (steps, 1))
 
-        held_grip = {side: float(state.gripper_positions[side]) for side in ARMS}
+        held_grip = {side: float(state.gripper_positions[side]) for side in self.arms}
 
         def gripper_rows(side: str) -> list[list[float]]:
             """The trajectory's own gripper column, or the held width if it has none.
@@ -656,13 +663,15 @@ class YamRealAdapter:
         # the arm arrived. A position-controlled arm lags a fast trajectory, so a
         # batch can end with the arm still well behind its last target. Settling
         # holds the final waypoint; this checks that holding it was enough.
-        reached = codec.robot_state(self._env)
+        reached = self._codec.robot_state(self._env)
         residuals = {
             side: float(
                 np.max(
                     np.abs(
-                        np.asarray(reached.joint_positions[side], dtype=np.float64).reshape(ARM_DOF)
-                        - np.asarray(value[-1], dtype=np.float64).reshape(ARM_DOF)
+                        np.asarray(reached.joint_positions[side], dtype=np.float64).reshape(
+                            self.dof
+                        )
+                        - np.asarray(value[-1], dtype=np.float64).reshape(self.dof)
                     )
                 )
             )
@@ -761,12 +770,12 @@ class YamRealAdapter:
 
     def _homing_duration_s(self) -> float:
         """Schedule the homing window from the largest joint the move must turn."""
-        state = codec.robot_state(self._env)
+        state = self._codec.robot_state(self._env)
         config = self._env.config
         worst = 0.0
-        for side in ARMS:
-            measured = np.asarray(state.joint_positions[side], dtype=np.float64).reshape(ARM_DOF)
-            home = np.asarray(config.arms[side].home_joints, dtype=np.float64).reshape(ARM_DOF)
+        for side in self.arms:
+            measured = np.asarray(state.joint_positions[side], dtype=np.float64).reshape(self.dof)
+            home = np.asarray(config.arms[side].home_joints, dtype=np.float64).reshape(self.dof)
             worst = max(worst, float(np.max(np.abs(measured - home))))
         seconds = worst / HOMING_JOINT_SPEED_RAD_S
         return float(min(MAXIMUM_HOMING_S, max(MINIMUM_HOMING_S, seconds)))
@@ -814,7 +823,7 @@ class YamRealAdapter:
                     )
                 )
             )
-            for side in ARMS
+            for side in self.arms
         }
         execution = ExecutionResult(
             ok=bool(result.get("success", True)),
@@ -828,7 +837,7 @@ class YamRealAdapter:
                 "home_verified": max(residuals.values()) <= HOME_DIAGNOSTIC_TOLERANCE_RAD,
                 "grippers_open": {
                     side: float(observation.robot_state.gripper_positions[side]) >= 0.95
-                    for side in ARMS
+                    for side in self.arms
                 },
                 # `seconds`, not `duration`: the argument is None on the default
                 # path, so float(duration) raised TypeError *after* the arms had
@@ -845,7 +854,7 @@ class YamRealAdapter:
         # every other path here now makes.
         self._record(
             execution,
-            targets={side: self._env.config.arms[side].home_joints for side in ARMS},
+            targets={side: self._env.config.arms[side].home_joints for side in self.arms},
         )
         return execution
 
@@ -867,14 +876,14 @@ class YamRealAdapter:
             # second arm -- and arm-to-arm collision is what a bimanual planner
             # is for. `yam_real` selects the dual-arm description.
             model="yam_real",
-            joint_names={side: config.arms[side].joint_names for side in ARMS},
+            joint_names={side: config.arms[side].joint_names for side in self.arms},
             # Identity, NOT the profile's measured base transforms. The cuRobo
             # model is bimanual and already places both arms 0.62 m apart, so
             # supplying the offset here applies it a second time and every goal
             # lands somewhere impossible. Measured symptom: IK refused the arm's
             # OWN current pose, which is reachable by definition.
-            base_transforms={side: np.eye(4, dtype=np.float64) for side in ARMS},
-            end_effector_links={side: f"{side}_grasp" for side in ARMS},
+            base_transforms={side: np.eye(4, dtype=np.float64) for side in self.arms},
+            end_effector_links={side: f"{side}_grasp" for side in self.arms},
         )
 
     def planning_workspace(self) -> tuple[np.ndarray, np.ndarray]:
@@ -894,8 +903,8 @@ class YamRealAdapter:
             "embodiment": self.embodiment,
             "station": self._env.config.station,
             "calibration_bundle": self._env.config.calibration.bundle_id,
-            "arms": list(ARMS),
-            "dof": ARM_DOF,
+            "arms": list(self.arms),
+            "dof": self.dof,
             "cameras": [self._env.config.camera.role],
             "language": "" if context is None else context.language,
         }
@@ -907,17 +916,15 @@ class YamRealAdapter:
         plant executed it is unattributable.
         """
         contract = self._env.control_contract()
-        config = self._env.config
-        lower = np.concatenate([config.joint_limits_lower, config.joint_limits_lower]).tolist()
-        upper = np.concatenate([config.joint_limits_upper, config.joint_limits_upper]).tolist()
+        lower, upper = zip(*(self._limits(side) for side in self.arms), strict=True)
         return {
             "control_frequency_hz": self.control_frequency,
             "control_period_s": self.control_period_s,
-            "arm_names": list(ARMS),
+            "arm_names": list(self.arms),
             "control_contract": contract,
             "control_contract_version": contract.get("version"),
-            "action_lower_bounds": lower,
-            "action_upper_bounds": upper,
+            "action_lower_bounds": np.concatenate(lower).tolist(),
+            "action_upper_bounds": np.concatenate(upper).tolist(),
             "physical_motion_authorized": self._allow_physical_motion,
             "command_rpc_count": self._command_rpc_count,
         }
