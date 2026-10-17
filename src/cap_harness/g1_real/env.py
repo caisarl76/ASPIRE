@@ -51,6 +51,8 @@ class G1Env:
     """Unitree G1 upper body over GEAR-SONIC, driven through a single action chokepoint."""
 
     dof = ARM_DOF
+    #: How long engage() waits for SONIC's first feedback after sending ``start``.
+    engage_feedback_timeout_s = 5.0
 
     def __init__(
         self,
@@ -175,6 +177,7 @@ class G1Env:
         right_hand: np.ndarray,
         *,
         hz: float | None = None,
+        allow_stale: bool = False,
     ) -> dict[str, Any] | None:
         """Step the chain toward the goal and publish it, or refuse when feedback is stale.
 
@@ -182,12 +185,15 @@ class G1Env:
         stream rate by default); a holding tick therefore sends zero. The first
         publish after a stale refusal re-seeds the chain from the measured pose
         before stepping: SONIC idled the arms meanwhile, and this is the one
-        place every publisher passes through.
+        place every publisher passes through. ``allow_stale`` exists for one
+        caller only, the pre-start hold in :meth:`engage`: SONIC publishes no
+        feedback until its control loop runs, so that hold is sent blind by
+        design and seeds nothing from a measurement.
         """
         with self._lock:
             age = self.body.feedback_age_s()
             limit = self.config.sonic.feedback_stale_s
-            if age > limit:
+            if age > limit and not allow_stale:
                 self._resume_from_measured = True
                 return {
                     "success": False,
@@ -195,7 +201,7 @@ class G1Env:
                 }
             if self._last_cmd is None:
                 raise RuntimeError("no target chain to step from: call engage() first")
-            if self._resume_from_measured:
+            if self._resume_from_measured and not allow_stale:
                 self._last_cmd = self.measured_command()
                 self._resume_from_measured = False
                 _log.warning("feedback resumed: chain re-seeded from the measured pose")
@@ -264,6 +270,14 @@ class G1Env:
         """
         if self._engaged is not None and self.keep_alive_running and not self._feedback_lost:
             return {**self._engaged, "already_engaged": True}
+        started = False
+        if self.body.get_observations() is None:
+            # SONIC publishes feedback only once its control loop runs (the
+            # deploy's CONTROL state), so the very first engage has nothing to
+            # seed from: hold the profile home blind, send start, wait for
+            # feedback, then continue exactly as a re-engage would.
+            self._start_without_feedback()
+            started = True
         age = self.body.feedback_age_s()
         limit = self.config.sonic.feedback_stale_s
         if age > limit:
@@ -284,7 +298,8 @@ class G1Env:
                 time.sleep(dt)
         finally:
             self._streaming = False
-        self.body.send_start()
+        if not started:
+            self.body.send_start()
         self._feedback_lost = False
         if not self.keep_alive_running:
             self._keep_alive = threading.Thread(
@@ -293,6 +308,44 @@ class G1Env:
             self._keep_alive.start()
         self._engaged = {"success": True, "hold_ticks": ticks, "already_engaged": False}
         return dict(self._engaged)
+
+    def _start_without_feedback(self) -> None:
+        """Hold the profile home on the stream, send ``start``, then wait for feedback.
+
+        The hold goes out with the stale check bypassed because there is no
+        feedback to check yet; it is the profile's home (what Home means on this
+        station), which is also where SONIC takes the arms when control starts.
+        Raises when SONIC stays silent past ``engage_feedback_timeout_s``.
+        """
+        cfg = self.config
+        q17 = codec.upper_body_from_arms(
+            cfg.waist_targets, cfg.arms["left"].home_joints, cfg.arms["right"].home_joints
+        )
+        lh = np.asarray(cfg.hands["left"].open, dtype=np.float64).reshape(HAND_DOF)
+        rh = np.asarray(cfg.hands["right"].open, dtype=np.float64).reshape(HAND_DOF)
+        self.body.seed_hands(lh, rh)
+        with self._lock:
+            self._last_cmd = (q17, lh, rh)
+        dt = 1.0 / float(cfg.controller.command_stream_hz)
+        ticks = max(1, round(float(cfg.sonic.engage_hold_s) / dt))
+        self._streaming = True
+        try:
+            for _ in range(ticks):
+                self._send_tick(q17, lh, rh, allow_stale=True)
+                time.sleep(dt)
+            self.body.send_start()
+            deadline = time.monotonic() + float(self.engage_feedback_timeout_s)
+            while self.body.get_observations() is None:
+                if time.monotonic() > deadline:
+                    raise RuntimeError(
+                        f"no SONIC feedback within {self.engage_feedback_timeout_s:.1f} s "
+                        "of start; not engaging"
+                    )
+                self._send_tick(q17, lh, rh, allow_stale=True)
+                time.sleep(dt)
+        finally:
+            self._streaming = False
+        _log.info("SONIC started from the profile home; feedback is flowing")
 
     def _not_ready(self) -> dict[str, Any] | None:
         """The refusal for a command before engage or after the keep-alive died, else ``None``."""

@@ -176,12 +176,34 @@ pointed at: re-run it against the real server only with the operator ready.
 
 ### Sim2sim (SONIC MuJoCo loop)
 
-Pending operator run (checklist for Task 14).
+Run on the workstation on 2026-10-18 (headless: the MuJoCo viewer on an Xvfb
+display, `9` injected with pynput; fork at `6a1741c`, ASPIRE at the commit that
+records this). Steps 1 to 5 done; step 6 still pending.
+
+Two things the gate corrected in ASPIRE, both now committed:
+
+- SONIC publishes feedback only in its CONTROL state, so the first `engage()`
+  cannot wait for feedback before `start`. It now holds the profile home on the
+  stream, sends `start`, waits for feedback (5 s), then seeds the chain from
+  the measured pose. A later `engage()` with feedback present keeps the old
+  order. Both orders were exercised against the real deploy binary.
+- Missing depth is encoded as zero (no return), not NaN: `CameraObservation`
+  rejects NaN and every observation, including `go_home`'s, failed to build.
+
+Camera note: the fork's `.mp4` replay driver publishes an empty image dict
+through the composed server (it returns `color_image`, which the server does
+not merge); the gate used a 20-line synthetic publisher in the composed
+schema instead. Not needed on PC2, where the RealSense driver runs.
 
 1. Fork terminal 1: `source .venv_sim/bin/activate && python gear_sonic/scripts/run_sim_loop.py`
+   (headless: `DISPLAY=:99 ... --enable-onscreen` under `Xvfb :99`; `9` is a
+   GLFW key callback only, so the viewer must exist to drop the robot).
 2. Fork terminal 2, from `gear_sonic_deploy/`:
    `./deploy.sh --input-type zmq_manager --output-type zmq --zmq-host 127.0.0.1 sim`;
-   wait for `Init done`, then press `9` in the MuJoCo window.
+   wait for `Init done`, then press `9` in the MuJoCo window **after** the
+   policy is started (ASPIRE's engage sends `start`; dropping first lets the
+   robot fall). Results below were taken with the robot dropped; on the band
+   the home residuals were roughly twice as large.
 3. Copy the `g1-lab` profile and set `station: g1-sim`, `feedback_host: 127.0.0.1`,
    `camera.host: 127.0.0.1`; keep the same `command_bind`.
 4. Run the `cap-harness run` command above (without `--station-backend fake`; the
@@ -196,9 +218,32 @@ Pending operator run (checklist for Task 14).
    (this also checks that a second `command{start=1, planner=1}` to the running
    `zmq_manager` is accepted); record the result.
 
-Result: ______
+Result (steps 1 to 5, 2026-10-18): the whole chain works end to end; the
+tracking gate does **not** pass. Engage switched SONIC to CONTROL and enabled
+its planner; `cap_program_go_home` streamed and returned `ok: true` with
+`home_verified: false`; the Dex3 hands tracked `cap_g1_real__set_hand_joints`
+to within about 0.05 rad (closed pose measured `[0.01, 0.01, 1.71, -1.52, -1.71, -1.52, -1.71]`).
+Arm tracking, robot dropped, per-joint `measured - home` in rad:
 
-Result (step 6): ______
+| Checkpoint | left (sh_p, sh_r, sh_y, elbow, wr_r, wr_p, wr_y) | right | max |
+| --- | --- | --- | --- |
+| `release` | 0.001, -0.005, 0.046, -0.032, 0.033, -0.091, -0.035 | -0.036, 0.007, -0.033, 0.018, 0.050, -0.111, 0.016 | 0.11 (wrist pitch) |
+| `sonic_v1_1` | 0.027, 0.015, 0.021, -0.090, 0.028, 0.005, 0.007 | -0.004, -0.047, 0.058, -0.025, 0.091, -0.034, -0.021 | 0.09 |
+
+Right-arm `move_to_pose` (mink + interpolation), end-effector error against
+the goal, `sonic_v1_1`: +3 cm forward settles at about 1.0 cm (0.7 to 1.7 cm,
+oscillating), -3 cm retract at 2.0 cm, +5 cm up at 2.6 cm; the error is flat
+from 1 s to 5 s after the command, so it is a steady bias of the learned
+controller, not slow convergence. With `release`, +3 cm forward passed
+(0.7 cm) and the retract failed (3.0 cm). Verdict: the spec section 9
+criteria (<= 0.05 rad hold, <= 1.5 cm) are not met in sim with either
+checkpoint; remedies are the arm kp/kd tuning on PC2 or the decoupled-WBC
+fallback (section 7), or a bounded per-joint integral correction of the
+streamed target in ASPIRE (not built; a design decision).
+
+Result (step 6): ______ (pending; the re-engage order after an outage was
+exercised once by a server restart with SONIC already in CONTROL, and the
+second `command{start=1, planner=1}` was accepted without a jump).
 
 ## 7. Acceptance test
 

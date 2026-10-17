@@ -82,7 +82,10 @@ class ComposedCameraRgbd:
         Depth is usable only with intrinsics and at the colour resolution:
         a fabricated fx=fy=1 or a misaligned map would back-project into
         confident metre-scale garbage, so either case is the missing-depth
-        path (all-NaN ``depth_m``), logged once.
+        path, logged once. Missing depth is an all-zero ``depth_m``: zero is
+        the sensor convention for "no return" that the shared contracts
+        accept and the projection code already drops (NaN is rejected by
+        ``CameraObservation`` and would break every observation).
         """
         images = msg["images"]
         rgb = _decode_rgb(images[self._role])
@@ -97,21 +100,24 @@ class ComposedCameraRgbd:
         depth = images.get(f"{self._role}_depth")
         depth_m = None
         if depth is None:
-            self._warn_once("no_depth", "no depth image; depth_m is NaN")
+            self._warn_once("no_depth", "no depth image; depth_m is all zero (no returns)")
         elif intr is None:
-            self._warn_once("no_intrinsics", "depth without intrinsics; depth_m is NaN")
+            self._warn_once(
+                "no_intrinsics", "depth without intrinsics; depth_m is all zero (no returns)"
+            )
         elif np.shape(depth)[:2] != (h, w):
             self._warn_once(
                 "depth_shape",
-                f"depth shape {np.shape(depth)[:2]} does not match colour {(h, w)}; depth_m is NaN",
+                f"depth shape {np.shape(depth)[:2]} does not match colour {(h, w)}; "
+                "depth_m is all zero (no returns)",
             )
         else:
             scale = intr.get("depth_scale", self._depth_scale_m)
             depth_m = np.asarray(depth).astype(np.float64) * scale
         if depth_m is None:
-            depth_m = np.full((h, w), np.nan)
+            depth_m = np.zeros((h, w), dtype=np.float64)
         frame = CameraFrame(rgb=rgb, depth_m=depth_m, intrinsics=k, timestamp_s=received_s)
-        return frame, bool(np.isnan(depth_m).all()), intr is None
+        return frame, not bool(np.any(depth_m > 0.0)), intr is None
 
     def read(self) -> CameraFrame | None:
         with self._lock:

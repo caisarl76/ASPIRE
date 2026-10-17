@@ -168,6 +168,63 @@ def test_set_hand_joints_overrides_scalar_mapping(env):
     np.testing.assert_allclose(env.body.commands[-1][2], q, atol=1e-6)
 
 
+class _FeedbackAfterStart(FakeBodyClient):
+    """SONIC publishes feedback only once control runs: nothing until ``start``."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.started = False
+        self.commands_before_start = None
+
+    def get_observations(self):
+        return super().get_observations() if self.started else None
+
+    def feedback_age_s(self):
+        return super().feedback_age_s() if self.started else float("inf")
+
+    def send_start(self):
+        self.commands_before_start = len(self.commands)
+        super().send_start()
+        self.started = True
+
+
+def test_engage_holds_home_then_starts_sonic_before_any_feedback():
+    cfg = load_g1_station_config("g1-lab")
+    fake = _FeedbackAfterStart(tau_s=0.01)
+    e = G1Env(cfg, fake, camera=SyntheticCamera())
+    try:
+        result = e.engage()
+        home = codec.upper_body_from_arms(
+            cfg.waist_targets, cfg.arms["left"].home_joints, cfg.arms["right"].home_joints
+        )
+        assert result["already_engaged"] is False and fake.start_count == 1
+        assert fake.commands_before_start >= 1  # the hold went out before start
+        np.testing.assert_allclose(fake.commands[0][0], home, atol=1e-9)
+        assert e.keep_alive_running
+        assert e.engage()["already_engaged"] is True and fake.start_count == 1
+    finally:
+        e.close()
+
+
+def test_engage_gives_up_when_sonic_never_answers_start():
+    cfg = load_g1_station_config("g1-lab")
+
+    class _NeverStarts(_FeedbackAfterStart):
+        def send_start(self):
+            self.commands_before_start = len(self.commands)
+            FakeBodyClient.send_start(self)  # counted, but feedback never appears
+
+    fake = _NeverStarts(tau_s=0.01)
+    e = G1Env(cfg, fake, camera=SyntheticCamera())
+    e.engage_feedback_timeout_s = 0.3
+    try:
+        with pytest.raises(RuntimeError, match="no SONIC feedback"):
+            e.engage()
+        assert fake.start_count == 1 and not e.keep_alive_running
+    finally:
+        e.close()
+
+
 def test_engage_is_idempotent_and_refuses_stale_feedback():
     cfg = load_g1_station_config("g1-lab")
     fake = FakeBodyClient()

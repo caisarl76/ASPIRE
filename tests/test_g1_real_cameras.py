@@ -65,7 +65,8 @@ def test_missing_depth_is_flagged_not_fatal():
         {"timestamps": {"ego_view": 1.0}, "images": {"ego_view": np.zeros((4, 4, 3), np.uint8)}},
     )
     frame = _read(cam)
-    assert frame is not None and np.isnan(frame.depth_m).all() and cam.depth_missing
+    assert frame is not None and not np.any(frame.depth_m) and cam.depth_missing
+    assert np.all(np.isfinite(frame.depth_m))  # the CameraObservation contract rejects NaN
     assert cam.intrinsics_missing
     np.testing.assert_array_equal(frame.intrinsics, [[1, 0, 2], [0, 1, 2], [0, 0, 1]])
     cam.close()
@@ -113,7 +114,7 @@ def test_undecodable_messages_are_dropped_and_keep_last_good_frame():
     pub.close()
 
 
-def test_depth_without_intrinsics_is_dropped_to_nan():
+def test_depth_without_intrinsics_is_dropped_to_zero():
     cam = ComposedCameraRgbd("127.0.0.1", 5735)
     pub = _publish(
         5735,
@@ -125,13 +126,13 @@ def test_depth_without_intrinsics_is_dropped_to_nan():
         },
     )
     frame = _read(cam)
-    assert frame is not None and np.isnan(frame.depth_m).all()
+    assert frame is not None and not np.any(frame.depth_m) and np.all(np.isfinite(frame.depth_m))
     assert cam.depth_missing and cam.intrinsics_missing
     cam.close()
     pub.close()
 
 
-def test_depth_shape_mismatch_is_dropped_to_nan():
+def test_depth_shape_mismatch_is_dropped_to_zero():
     cam = ComposedCameraRgbd("127.0.0.1", 5736)
     pub = _publish(
         5736,
@@ -144,7 +145,7 @@ def test_depth_shape_mismatch_is_dropped_to_nan():
         },
     )
     frame = _read(cam)
-    assert frame is not None and frame.depth_m.shape == (4, 4) and np.isnan(frame.depth_m).all()
+    assert frame is not None and frame.depth_m.shape == (4, 4) and not np.any(frame.depth_m)
     assert cam.depth_missing and not cam.intrinsics_missing
     assert frame.intrinsics[0, 0] == 600.0
     cam.close()
