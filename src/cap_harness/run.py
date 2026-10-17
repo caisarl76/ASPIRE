@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+from typing import Any
 
 from .api import CapApi
 from .artifacts import RunRecorder, StepLimitReached, TracedProvider, redact
@@ -20,6 +21,46 @@ from .runtime import ProgramExecutionResult, ProgramExecutor
 DEFAULT_MAX_STEPS = 1000
 
 _CLOSE_AFTER_RECORDING = frozenset({"behavior"})
+REAL_BENCHMARKS = frozenset({"yam_real", "g1_real"})
+
+
+def _real_embodiment(benchmark: str) -> tuple[Any, ...]:
+    """Real-robot embodiment table row.
+
+    (adapter_type, registry_factory, public_tool_names, station_builder, kinematics_type,
+    default_camera_getter); imports stay lazy.
+    """
+    if benchmark == "yam_real":
+        from .registry import YAM_REAL_PUBLIC_TOOL_NAMES
+        from .yam_real.adapter import YamRealAdapter
+        from .yam_real.kinematics import YamKinematics
+        from .yam_real.registry import YamRealTaskRegistry
+        from .yam_real.station import build_real_station
+
+        return (
+            YamRealAdapter,
+            YamRealTaskRegistry,
+            YAM_REAL_PUBLIC_TOOL_NAMES,
+            build_real_station,
+            YamKinematics,
+            lambda env: env.config.camera.role,
+        )
+    from .g1_real.adapter import G1RealAdapter
+    from .g1_real.kinematics import G1Kinematics
+    from .g1_real.registry import G1RealTaskRegistry
+    from .g1_real.station import build_real_station
+    from .registry import G1_REAL_PUBLIC_TOOL_NAMES
+
+    return (
+        G1RealAdapter,
+        G1RealTaskRegistry,
+        G1_REAL_PUBLIC_TOOL_NAMES,
+        build_real_station,
+        G1Kinematics,
+        lambda env: env.config.camera.role,
+    )
+
+
 """Benchmarks whose simulator must outlive artifact finalization (Isaac Sim ends the process)."""
 BEHAVIOR_VIDEO_FRAME_STRIDE = 3
 
@@ -81,10 +122,15 @@ def run_program(
     station: str = "yam-example",
     station_config_root: Path | None = None,
     allow_motion: bool = False,
+    station_backend: str = "real",
 ) -> RunOutcome:
     """Run an episode, using its task horizon when max_steps is not supplied."""
-    if benchmark not in {"behavior", "libero-pro", "robosuite", "yam_real"}:
-        raise ValueError("benchmark must be behavior, libero-pro, robosuite, or yam_real")
+    if benchmark not in {"behavior", "libero-pro", "robosuite"} | REAL_BENCHMARKS:
+        raise ValueError("benchmark must be behavior, libero-pro, robosuite, yam_real, or g1_real")
+    if station_backend not in {"real", "fake"}:
+        raise ValueError("station_backend must be 'real' or 'fake'")
+    if station_backend == "fake" and benchmark != "g1_real":
+        raise ValueError("station_backend 'fake' is only supported for the g1_real benchmark")
     if init_mode not in {"saved", "seeded"}:
         raise ValueError("init_mode must be 'saved' or 'seeded'")
     if init_mode != "saved" and benchmark != "libero-pro":
@@ -113,15 +159,19 @@ def run_program(
         metadata = registry.resolve(suite, task_id)
         adapter_type = BehaviorAdapter
         extension_allowlist = BEHAVIOR_PUBLIC_TOOL_NAMES
-    elif benchmark == "yam_real":
-        from .registry import YAM_REAL_PUBLIC_TOOL_NAMES
-        from .yam_real.adapter import YamRealAdapter
-        from .yam_real.registry import YamRealTaskRegistry
-
-        registry = YamRealTaskRegistry()
+    elif benchmark in REAL_BENCHMARKS:
+        (
+            adapter_type,
+            registry_factory,
+            extension_allowlist,
+            station_builder,
+            kinematics_type,
+            default_camera_getter,
+        ) = _real_embodiment(benchmark)
+        if station_backend == "fake":
+            from .g1_real.station import build_fake_station as station_builder
+        registry = registry_factory()
         metadata = registry.resolve(suite, task_id)
-        adapter_type = YamRealAdapter
-        extension_allowlist = YAM_REAL_PUBLIC_TOOL_NAMES
     else:
         from cap_harness.registry import ROBOSUITE_PUBLIC_TOOL_NAMES
         from cap_harness.robosuite.adapter import RobosuiteAdapter
@@ -148,7 +198,7 @@ def run_program(
         provider_capabilities = {
             "segmentation": "sam3",
             "grasping": ("contact-graspnet",),
-            "ik": ("mink", "curobo") if benchmark == "yam_real" else ("pyroki", "curobo"),
+            "ik": ("mink", "curobo") if benchmark in REAL_BENCHMARKS else ("pyroki", "curobo"),
             "trajectory_planning": ("interpolation", "curobo"),
             "pose_planning": ("composed", "curobo-integrated"),
         }
@@ -168,7 +218,7 @@ def run_program(
         providers=provider_capabilities,
         # Isaac renders at 30 Hz; every third frame keeps videos at 10 fps.
         video_frame_stride=BEHAVIOR_VIDEO_FRAME_STRIDE if benchmark == "behavior" else 1,
-        step_video=benchmark != "yam_real",
+        step_video=benchmark not in REAL_BENCHMARKS,
     )
     adapter: object | None = None
     execution: ProgramExecutionResult | None = None
@@ -245,11 +295,9 @@ def run_program(
             }
             if benchmark == "libero-pro":
                 adapter_kwargs["init_mode"] = init_mode
-            if benchmark == "yam_real":
-                from .yam_real.station import build_real_station
-
+            if benchmark in REAL_BENCHMARKS:
                 adapter = adapter_type(
-                    build_real_station(station, config_root=station_config_root),
+                    station_builder(station, config_root=station_config_root),
                     registry=registry,
                     run_observer=recorder,
                     allow_physical_motion=allow_motion,
@@ -324,7 +372,7 @@ def run_program(
                     base_url=os.environ.get("CAP_HARNESS_CUROBO_URL", DEFAULT_CUROBO_URL),
                     **(
                         {"control_period_s": adapter.control_period_s}
-                        if benchmark == "yam_real"
+                        if benchmark in REAL_BENCHMARKS
                         else {}
                     ),
                 ),
@@ -332,13 +380,15 @@ def run_program(
                 "curobo",
             )
             ik_providers = {"pyroki": pyroki, "curobo": curobo}
-            if benchmark == "yam_real":
+            if benchmark in REAL_BENCHMARKS:
                 from .providers.yam_kinematics import YamKinematicsIKProvider
-                from .yam_real.kinematics import YamKinematics
 
                 ik_providers = {
                     "mink": TracedProvider(
-                        YamKinematicsIKProvider(YamKinematics(adapter.native_env.config.model_xml)),
+                        YamKinematicsIKProvider(
+                            kinematics_type(adapter.native_env.config.model_xml),
+                            dof=adapter.dof,
+                        ),
                         recorder,
                         "mink",
                     ),
@@ -351,8 +401,8 @@ def run_program(
                 ik_providers=ik_providers,
                 trajectory_planning_providers={"curobo": curobo},
                 integrated_pose_planning_providers={"curobo-integrated": curobo},
-                default_camera=adapter.native_env.config.camera.role
-                if benchmark == "yam_real"
+                default_camera=default_camera_getter(adapter.native_env)
+                if benchmark in REAL_BENCHMARKS
                 else "agentview",
                 recorder=recorder,
             )

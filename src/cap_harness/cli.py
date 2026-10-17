@@ -141,13 +141,21 @@ def build_parser() -> argparse.ArgumentParser:
     run = subparsers.add_parser("run", help="execute and record one Code-as-Policy episode")
     run.add_argument(
         "--benchmark",
-        choices=("behavior", "libero-pro", "robosuite", "yam_real"),
+        choices=("behavior", "libero-pro", "robosuite", "yam_real", "g1_real"),
         default="libero-pro",
     )
     run.add_argument("--suite", required=True)
-    run.add_argument("--station", default="yam-example", help="YAM station profile identifier")
+    run.add_argument(
+        "--station", default="yam-example", help="YAM/G1 station profile identifier (e.g. g1-lab)"
+    )
     run.add_argument(
         "--station-config-root", type=Path, help="Custom YAM station profiles directory"
+    )
+    run.add_argument(
+        "--station-backend",
+        choices=("real", "fake"),
+        default="real",
+        help="g1_real only: 'fake' runs against an in-process fake body",
     )
     run.add_argument("--allow-motion", action="store_true", help="Enable physical YAM commands")
     run.add_argument("--task-id", type=int, required=True)
@@ -401,6 +409,7 @@ def _run_command(args: argparse.Namespace) -> int:
         flat_layout=args.flat_run_dir,
         capture_videos=not args.no_videos,
         station=args.station,
+        station_backend=args.station_backend,
         station_config_root=args.station_config_root,
         allow_motion=args.allow_motion,
     )
