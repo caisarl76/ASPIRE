@@ -238,8 +238,29 @@ controller, not slow convergence. With `release`, +3 cm forward passed
 (0.7 cm) and the retract failed (3.0 cm). Verdict: the spec section 9
 criteria (<= 0.05 rad hold, <= 1.5 cm) are not met in sim with either
 checkpoint; remedies are the arm kp/kd tuning on PC2 or the decoupled-WBC
-fallback (section 7), or a bounded per-joint integral correction of the
-streamed target in ASPIRE (not built; a design decision).
+fallback (section 7), or a bounded correction of the command in ASPIRE.
+
+Correction rounds (same rig, `sonic_v1_1`, robot dropped, 2026-10-18): the
+`controller.pose_correction_rounds` profile knob (3 on `g1-lab`) makes
+`move_to_pose` re-plan to the previous command plus the measured residual, up
+to that many rounds, verifying each against the original goal; it stops on
+success, on a stall (a round that does not beat 75% of the previous error) or
+at a 5 cm per-axis offset cap, and reports `correction_rounds` and
+`correction_offset_m`. With it, every move passed the 1 cm tolerance:
+
+| Right-arm move (torso frame) | rounds | final EE error | offset from goal (x, y, z) | wall time |
+| --- | --- | --- | --- | --- |
+| +3 cm forward | 1 | 0.6 cm | -0.3, +1.3, -0.7 cm | 2.2 s |
+| -3 cm retract | 0 | 0.6 cm | none | 1.2 s |
+| +5 cm up | 2 | 0.9 cm | -2.2, -1.5, -1.1 cm | 3.8 s |
+| +10 cm forward | 0 | 0.7 cm | none | 1.4 s |
+
+The error stayed under 1 cm for the 5 s after each return (0.3 to 0.9 cm,
+oscillating). The bias is not along the move axis alone (the "up" move needed
+a sideways and downward offset), so the task-space loop is the right place
+for it rather than a per-axis gain. The raw single-shot bias varies between
+runs by about 1 cm, which is why the retract needed no round here and 2.0 cm
+earlier. Cost: about 1.1 s per round.
 
 Result (step 6): ______ (pending; the re-engage order after an outage was
 exercised once by a server restart with SONIC already in CONTROL, and the
@@ -255,6 +276,9 @@ Pending operator run. `scripts/g1_tracking_acceptance.py` (Task 15) automates it
 | Ten 0.15 m straight-line segments (default `--segment-m 0.15`; 0.3 m is unreachable along torso X from home on the G1, and even 0.15 m only works retracting first, so segments alternate -X then +X); speed is logged per segment, not enforced, because the interpolation planner ignores `time_dilation_factor` | final EE error <= 1.5 cm and <= 5 deg; no 0.10 rad residual failure | ______ |
 | Hold a 300 g object | repeat the 5 s hold, error <= 0.05 rad | ______ |
 
-If tracking fails, tune by editing the arm kp/kd constants in the fork's
-`policy_parameters.hpp` and rebuilding on PC2 (no runtime gain flag exists). If that
+`move_to_pose` already runs up to `controller.pose_correction_rounds` corrective
+rounds (section 6, sim2sim); the segment test reports the rounds each segment
+used. If tracking still fails, tune by editing the arm kp/kd constants in the
+fork's `policy_parameters.hpp` and rebuilding on PC2 (no runtime gain flag
+exists); higher gains make each round count for more. If that
 round fails, the fallback is the decoupled-WBC body client, which is not built.
