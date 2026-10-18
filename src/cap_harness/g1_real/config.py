@@ -67,6 +67,7 @@ class G1ControllerConfig:
     command_stream_hz: float
     max_joint_step_rad: float
     final_joint_tolerance_rad: float
+    pose_correction_rounds: int = 0  # move_to_pose re-commands the measured residual
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +127,12 @@ def _station_path(station: str, config_root: str | Path | None) -> Path:
 def _within(value: np.ndarray, lower: np.ndarray, upper: np.ndarray, name: str) -> None:
     if np.any(value < lower) or np.any(value > upper):
         raise ValueError(f"{name} must lie within its joint limits")
+
+
+def _rounds(raw: object) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise ValueError("controller.pose_correction_rounds must be a non-negative integer")
+    return raw
 
 
 def _names(raw: object, count: int, name: str) -> tuple[str, ...]:
@@ -221,6 +228,7 @@ def load_g1_station_config(
         final_joint_tolerance_rad=_positive(
             raw_controller["final_joint_tolerance_rad"], "final joint tolerance"
         ),
+        pose_correction_rounds=_rounds(raw_controller.get("pose_correction_rounds", 0)),
     )
 
     raw_camera = data["camera"]

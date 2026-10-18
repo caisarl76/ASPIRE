@@ -1198,3 +1198,67 @@ def test_go_home_stops_at_terminal_results(monkeypatch, terminal_flag, first_is_
     assert getattr(result, terminal_flag)
     assert result.error == terminal.error
     assert result.steps_executed == (1 if first_is_terminal else 120)
+
+
+class _BiasedPlant(FakeAdapter):
+    """End effector lands at ``gain`` times the commanded position (SONIC-like bias)."""
+
+    pose_correction_rounds = 3
+
+    def __init__(self, ik: FakeIK, gain: float) -> None:
+        super().__init__()
+        self._ik, self._gain = ik, gain
+
+    def execute_trajectory(self, trajectory: object) -> ExecutionResult:
+        result = super().execute_trajectory(trajectory)
+        reached = Pose(
+            position=self._gain * self._ik.targets[-1].position,
+            quaternion_wxyz=np.array([1.0, 0.0, 0.0, 0.0]),
+            frame="base",
+        )
+        self.state = replace(self.state, end_effector_poses=reached)
+        return replace(result, final_observation=self.get_observation())
+
+
+def _forward_10cm() -> Pose:
+    return Pose(np.array([0.10, 0.0, 0.0]), np.array([1.0, 0.0, 0.0, 0.0]), "base")
+
+
+def test_move_to_pose_corrects_a_proportional_tracking_bias() -> None:
+    ik = FakeIK(np.full(7, 0.1))
+    api = CapApi(_BiasedPlant(ik, gain=0.6), ik_providers={"pyroki": ik})
+
+    result = api.move_to_pose(_forward_10cm(), tolerance=0.015)
+
+    # reach 6.0 cm (miss 4.0) -> command 14, reach 8.4 (miss 1.6) -> 15.6 capped to the
+    # 5 cm offset -> 15, reach 9.0 (miss 1.0, inside tolerance)
+    assert result.ok
+    assert result.diagnostics["correction_rounds"] == 2
+    assert len(ik.targets) == 3
+    np.testing.assert_allclose(ik.targets[-1].position, [0.15, 0.0, 0.0], atol=1e-9)
+    assert result.diagnostics["position_error_m"] == pytest.approx(0.01)
+    assert result.diagnostics["correction_offset_m"] == pytest.approx([0.05, 0.0, 0.0])
+
+
+def test_move_to_pose_correction_stops_on_a_stall_and_reports_rounds() -> None:
+    ik = FakeIK(np.full(7, 0.1))
+    api = CapApi(_BiasedPlant(ik, gain=0.0), ik_providers={"pyroki": ik})
+
+    result = api.move_to_pose(_forward_10cm(), tolerance=0.015)
+
+    assert not result.ok and result.error is not None
+    assert result.error.details["correction_rounds"] == 1  # no progress: stop, not 3 rounds
+    assert result.error.details["correction_offset_m"] == pytest.approx([0.05, 0.0, 0.0])  # capped
+    assert len(ik.targets) == 2
+
+
+def test_move_to_pose_without_correction_rounds_is_single_shot() -> None:
+    ik = FakeIK(np.full(7, 0.1))
+    plant = _BiasedPlant(ik, gain=0.6)
+    plant.pose_correction_rounds = 0
+    api = CapApi(plant, ik_providers={"pyroki": ik})
+
+    result = api.move_to_pose(_forward_10cm(), tolerance=0.015)
+
+    assert not result.ok and len(ik.targets) == 1
+    assert "correction_rounds" not in result.error.details

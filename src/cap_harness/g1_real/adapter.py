@@ -42,6 +42,9 @@ class G1RealAdapter(YamRealAdapter):
             run_observer=run_observer,
             codec=codec,
         )
+        # Read by CapApi.move_to_pose: SONIC tracks a streamed target with a
+        # steady bias, so the goal is re-commanded from the measured residual.
+        self.pose_correction_rounds = env.config.controller.pose_correction_rounds
 
     def _provenance(self) -> dict[str, Any]:
         # No calibration bundle on this station: the profile hash attributes an episode.

@@ -1311,7 +1311,16 @@ class CapApi:
         arm: str = "primary",
         strategy: MotionStrategy | None = None,
     ) -> ExecutionResult:
-        """Move to a Pose or an absolute position/frame plus quaternion or rpy_deg."""
+        """Move to a Pose or an absolute position/frame plus quaternion or rpy_deg.
+
+        An adapter that declares ``pose_correction_rounds > 0`` (a tracking
+        controller with a steady bias, such as SONIC on the G1) gets up to that
+        many corrective rounds: each one re-plans to the previous command plus
+        the measured residual, which converges on a proportional bias in two or
+        three rounds. The loop stops early on success, on a stall (a round that
+        barely improves the error, which means a reach or saturation limit rather
+        than bias), or once the accumulated offset hits ``_POSE_CORRECTION_MAX_OFFSET_M``.
+        """
         arm = self._resolve_arm(arm)
         validation = self._motion_options(tolerance, max_steps)
         if validation is not None:
@@ -1327,6 +1336,34 @@ class CapApi:
                 steps_executed=0,
                 error=ApiError(ErrorCode.INVALID_REQUEST, str(exc)),
             )
+        result = self._execute_pose(target_pose, tolerance, max_steps, arm, strategy)
+        rounds = int(getattr(self._adapter, "pose_correction_rounds", 0))
+        commanded = target_pose
+        for round_index in range(1, rounds + 1):
+            error_m = _pose_tolerance_miss(result)
+            if error_m is None:  # success, or a failure correction cannot fix
+                break
+            measured = self._execution_state(result).end_effector_poses[arm]
+            commanded = _corrected_pose(commanded, target_pose, measured)
+            result = self._execute_pose(
+                commanded, tolerance, max_steps, arm, strategy, goal=target_pose
+            )
+            result = _with_correction_diagnostics(result, round_index, commanded, target_pose)
+            new_error_m = _pose_tolerance_miss(result)
+            if new_error_m is not None and new_error_m > _POSE_CORRECTION_STALL_RATIO * error_m:
+                break
+        return result
+
+    def _execute_pose(
+        self,
+        target_pose: Pose,
+        tolerance: float,
+        max_steps: int,
+        arm: str,
+        strategy: MotionStrategy | None,
+        goal: Pose | None = None,
+    ) -> ExecutionResult:
+        """Plan to and execute ``target_pose``; verify against ``goal`` (default: the target)."""
         plan = self._stage(
             "plan_motion",
             self.plan_motion,
@@ -1356,7 +1393,7 @@ class CapApi:
         )
         if not execution.ok:
             return execution
-        return self._validate_pose_execution(execution, target_pose, tolerance, arm)
+        return self._validate_pose_execution(execution, goal or target_pose, tolerance, arm)
 
     def _validate_pose_execution(
         self,
@@ -2086,3 +2123,48 @@ class CapApi:
 
 
 __all__ = ["CapApi"]
+
+
+_POSE_CORRECTION_MAX_OFFSET_M = 0.05  # per axis, command minus goal
+_POSE_CORRECTION_STALL_RATIO = 0.75  # a round must beat this fraction of the previous error
+
+
+def _pose_tolerance_miss(result: ExecutionResult) -> float | None:
+    """The position error of a tolerance miss; None for success or any other failure."""
+    if result.ok or result.error is None or result.final_observation is None:
+        return None
+    error_m = result.error.details.get("position_error_m")
+    return None if error_m is None else float(error_m)
+
+
+def _corrected_pose(commanded: Pose, target: Pose, measured: Pose) -> Pose:
+    """Previous command plus the measured residual, offset capped per axis."""
+    from scipy.spatial.transform import Rotation
+
+    # (commanded + (target - measured)) - target, i.e. the new offset from the goal.
+    offset = np.clip(
+        commanded.position - measured.position,
+        -_POSE_CORRECTION_MAX_OFFSET_M,
+        _POSE_CORRECTION_MAX_OFFSET_M,
+    )
+    as_rot = lambda q: Rotation.from_quat(np.asarray(q)[[1, 2, 3, 0]])
+    rotation = as_rot(target.quaternion_wxyz) * as_rot(measured.quaternion_wxyz).inv()
+    quaternion = (rotation * as_rot(commanded.quaternion_wxyz)).as_quat()[[3, 0, 1, 2]]
+    return Pose(
+        position=target.position + offset,
+        quaternion_wxyz=quaternion / np.linalg.norm(quaternion),
+        frame=target.frame,
+    )
+
+
+def _with_correction_diagnostics(
+    result: ExecutionResult, rounds: int, commanded: Pose, target: Pose
+) -> ExecutionResult:
+    extra = {
+        "correction_rounds": rounds,
+        "correction_offset_m": (commanded.position - target.position).tolist(),
+    }
+    error = result.error
+    if error is not None:
+        error = replace(error, details={**error.details, **extra})
+    return replace(result, error=error, diagnostics={**result.diagnostics, **extra})
