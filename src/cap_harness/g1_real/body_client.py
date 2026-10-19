@@ -142,13 +142,34 @@ class SonicZmqBodyClient:
 
     @staticmethod
     def _heading(msg: dict) -> float:
-        active = float(np.asarray(msg.get("planner_reference_active", 0)).reshape(-1)[0])
-        key = (
-            "reference_heading_quat"
-            if active == 1 and "reference_heading_quat" in msg
-            else "base_quat"
-        )
-        return heading_yaw_from_quat_wxyz(np.asarray(msg[key]).reshape(-1))
+        """Yaw that holds the current heading, in the frame SONIC reads ``facing`` in.
+
+        The planner's frame has yaw zero at the heading the policy initialised
+        with: the fork's deploy publishes that correction as
+        ``reference_heading_quat`` (valid while ``planner_reference_active``),
+        older builds only ``init_base_quat`` plus ``delta_heading``. The raw IMU
+        yaw is in a frame the planner never sees; sent as ``facing`` it commands
+        a turn by the heading the robot had at init (a 90 deg turn on engage on
+        the real robot, invisible in sim where that heading is zero). Without
+        any heading telemetry the only safe answer is the planner's own zero.
+        """
+
+        def yaw(key: str) -> float:
+            return heading_yaw_from_quat_wxyz(np.asarray(msg[key]).reshape(-1))
+
+        if "reference_heading_quat" in msg:
+            active = float(np.asarray(msg.get("planner_reference_active", 0)).reshape(-1)[0])
+            if active != 1:
+                return 0.0  # planner initialising at reference yaw zero
+            reference = yaw("reference_heading_quat")
+        elif "init_base_quat" in msg:
+            reference = yaw("init_base_quat") + float(
+                np.asarray(msg.get("delta_heading", 0.0)).reshape(-1)[0]
+            )
+        else:
+            return 0.0
+        delta = yaw("base_quat") - reference
+        return math.atan2(math.sin(delta), math.cos(delta))
 
     def get_observations(self) -> dict[str, np.ndarray | float] | None:
         msg, stamp = self._snapshot()

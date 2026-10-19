@@ -3,6 +3,7 @@ import time
 from g1_real_wire import decode_packed
 import msgpack
 import numpy as np
+import pytest
 import zmq
 
 from cap_harness.g1_real.body_client import FakeBodyClient, SonicZmqBodyClient
@@ -79,7 +80,7 @@ def test_sonic_client_reads_feedback_and_heading():
     time.sleep(0.2)
     obs = client.get_observations()
     assert np.allclose(obs["right_joint_pos"], np.arange(22.0, 29.0))
-    assert abs(obs["heading_yaw"] - 0.6) < 1e-6
+    assert abs(obs["heading_yaw"]) < 1e-6  # base == reference: hold, do not turn
     assert client.feedback_age_s() < 0.5
     time.sleep(0.6)  # feedback stops: age must grow, not be refreshed by polling
     assert client.feedback_age_s() > 0.5
@@ -123,10 +124,11 @@ def test_hand_step_limit_comes_from_the_profile_value():
     sub.close()
 
 
-def test_heading_falls_back_to_base_quat_without_a_reference():
+def test_heading_never_sends_the_raw_imu_yaw_without_a_reference():
+    # The old fallback returned the IMU yaw (0.6 here) and turned the real robot on engage.
     q = [np.cos(0.3), 0, 0, np.sin(0.3)]
     yaw = SonicZmqBodyClient._heading({"planner_reference_active": [1], "base_quat": q})
-    assert abs(yaw - 0.6) < 1e-6
+    assert yaw == 0.0
 
 
 def test_poll_thread_survives_a_subscriber_error():
@@ -139,3 +141,57 @@ def test_poll_thread_survives_a_subscriber_error():
     assert client._thread.is_alive() and client.feedback_age_s() == float("inf")
     client.close()
     real_sub.close()
+
+
+def _quat_yaw(yaw: float) -> list[float]:
+    return [np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]
+
+
+def _feedback(**fields) -> dict:
+    return {
+        "body_q": [0.0] * 29,
+        "body_dq": [0.0] * 29,
+        "left_hand_q": [0.0] * 7,
+        "right_hand_q": [0.0] * 7,
+        **fields,
+    }
+
+
+@pytest.mark.parametrize(
+    ("msg", "expected"),
+    [
+        # Real robot on engage: IMU heading 90 deg, planner frame initialised there -> hold.
+        (_feedback(base_quat=_quat_yaw(np.pi / 2), init_base_quat=_quat_yaw(np.pi / 2)), 0.0),
+        # Turned 0.3 rad since init (by hand or a prior session): hold where it is now.
+        (_feedback(base_quat=_quat_yaw(0.9), init_base_quat=_quat_yaw(0.6)), 0.3),
+        (
+            _feedback(base_quat=_quat_yaw(0.9), init_base_quat=_quat_yaw(0.6), delta_heading=0.1),
+            0.2,
+        ),
+        # Fork build: the applied reference wins over init_base_quat.
+        (
+            _feedback(
+                base_quat=_quat_yaw(1.0),
+                init_base_quat=_quat_yaw(0.0),
+                reference_heading_quat=_quat_yaw(0.6),
+                planner_reference_active=[1],
+            ),
+            0.4,
+        ),
+        # Planner still initialising: its frame is at yaw zero, send zero.
+        (
+            _feedback(
+                base_quat=_quat_yaw(1.0),
+                reference_heading_quat=_quat_yaw(0.6),
+                planner_reference_active=[0],
+            ),
+            0.0,
+        ),
+        # No heading telemetry at all: never send the raw IMU yaw.
+        (_feedback(base_quat=_quat_yaw(np.pi / 2)), 0.0),
+        # Wraps: IMU -170 deg, init +170 deg is a 20 deg difference, not 340.
+        (_feedback(base_quat=_quat_yaw(-2.96706), init_base_quat=_quat_yaw(2.96706)), 0.349066),
+    ],
+)
+def test_facing_yaw_is_relative_to_the_planner_frame(msg, expected):
+    assert SonicZmqBodyClient._heading(msg) == pytest.approx(expected, abs=1e-5)

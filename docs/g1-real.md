@@ -84,6 +84,16 @@ point `sam3_url` / `curobo_url` there (profile fields, or `--sam3-url` /
 
 ## 3. Engage
 
+**Heading (fixed 2026-10-19).** The first real engage turned the robot 90 deg
+left. SONIC's planner reads `facing` in a frame whose yaw zero is the heading
+the policy initialised with, and ASPIRE was sending the raw IMU yaw. The body
+client now sends the IMU yaw relative to `reference_heading_quat` (fork deploy
+builds, while `planner_reference_active`) or `init_base_quat` + `delta_heading`
+(older builds such as PC2's), and zero when neither is published, which holds the
+planner's own heading. Sim cannot catch this (the sim robot starts at yaw zero),
+so the first engage after any change here is done with the robot **hanging,
+feet off the floor**: the legs must stay still, not step or turn.
+
 In `zmq_manager` mode SONIC has no `]` start key. ASPIRE's operator-only engage path
 waits for fresh feedback, streams a hold at the measured pose for 0.2 s, sends
 `command{start=1, planner=1}` once, then starts the 50 Hz keep-alive. SONIC drops
