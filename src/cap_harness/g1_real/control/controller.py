@@ -142,7 +142,9 @@ def execute_upper_body_trajectory(
         # the start and the end are felt as jerks.
         phase = min(max(t_now / stream_s, 0.0), 1.0)
         tau = stream_s * (1.0 - math.cos(math.pi * phase)) / 2.0
-        return _sample(ts, rows, tau) + start_offset * (1.0 - phase)
+        # The offset fades with the eased progress, not wall time, so the
+        # command never dips back toward the measurement while easing in.
+        return _sample(ts, rows, tau) + start_offset * (1.0 - tau / stream_s)
 
     t0 = time.monotonic()
     command_count = 0

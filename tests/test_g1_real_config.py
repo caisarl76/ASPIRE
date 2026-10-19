@@ -49,4 +49,4 @@ def test_profile_declares_sonic_tracking_knobs():
     controller = load_g1_station_config("g1-lab").controller
     assert controller.pose_correction_rounds == 3
     assert controller.plan_max_joint_velocity_rad_s == pytest.approx(0.5)
-    assert controller.trajectory_start_interp_s == pytest.approx(0.2)
+    assert controller.trajectory_start_interp_s == 0.0  # the stream starts at the chain itself
