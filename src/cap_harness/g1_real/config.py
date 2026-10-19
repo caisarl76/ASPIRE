@@ -68,6 +68,8 @@ class G1ControllerConfig:
     max_joint_step_rad: float
     final_joint_tolerance_rad: float
     pose_correction_rounds: int = 0  # move_to_pose re-commands the measured residual
+    plan_max_joint_velocity_rad_s: float | None = None  # caps interpolated trajectories
+    trajectory_start_interp_s: float = 0.0  # blend from the chain target into a batch
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,7 +231,15 @@ def load_g1_station_config(
             raw_controller["final_joint_tolerance_rad"], "final joint tolerance"
         ),
         pose_correction_rounds=_rounds(raw_controller.get("pose_correction_rounds", 0)),
+        plan_max_joint_velocity_rad_s=(
+            None
+            if raw_controller.get("plan_max_joint_velocity_rad_s") is None
+            else _positive(raw_controller["plan_max_joint_velocity_rad_s"], "plan max velocity")
+        ),
+        trajectory_start_interp_s=float(raw_controller.get("trajectory_start_interp_s", 0.0)),
     )
+    if controller.trajectory_start_interp_s < 0.0:
+        raise ValueError("controller.trajectory_start_interp_s must be >= 0")
 
     raw_camera = data["camera"]
     camera = G1CameraConfig(

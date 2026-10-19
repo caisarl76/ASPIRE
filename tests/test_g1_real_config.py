@@ -43,3 +43,10 @@ def test_profile_limits_match_the_fork_urdf():
 def test_unknown_station_raises():
     with pytest.raises(FileNotFoundError):
         load_g1_station_config("nope")
+
+
+def test_profile_declares_sonic_tracking_knobs():
+    controller = load_g1_station_config("g1-lab").controller
+    assert controller.pose_correction_rounds == 3
+    assert controller.plan_max_joint_velocity_rad_s == pytest.approx(0.5)
+    assert controller.trajectory_start_interp_s == pytest.approx(0.2)

@@ -107,6 +107,15 @@ class YamRealAdapter:
         controller = env.config.controller
         self.control_frequency = controller.control_frequency_hz
         self.control_period_s = 1.0 / controller.control_frequency_hz
+        # Profile knobs for a tracking controller that lags the stream (G1/SONIC);
+        # YAM profiles leave both at their defaults.
+        velocity = getattr(controller, "plan_max_joint_velocity_rad_s", None)
+        self.max_planning_step_rad: float | None = (
+            None if velocity is None else float(velocity) * self.control_period_s
+        )
+        self.trajectory_start_interp_s = float(
+            getattr(controller, "trajectory_start_interp_s", 0.0)
+        )
 
     # -- identity ----------------------------------------------------------
 
@@ -655,7 +664,11 @@ class YamRealAdapter:
         )
         self._before_command()
         try:
-            result = self._env.execute_action_batch(batch, settle_s=TRAJECTORY_SETTLE_S)
+            result = self._env.execute_action_batch(
+                batch,
+                settle_s=TRAJECTORY_SETTLE_S,
+                start_interp_s=self.trajectory_start_interp_s,
+            )
         except Exception as exc:
             denied = self._denied_execution(self._plant_failure(exc, "trajectory"))
             self._record(denied)
@@ -931,6 +944,7 @@ class YamRealAdapter:
             "action_upper_bounds": np.concatenate(upper).tolist(),
             "physical_motion_authorized": self._allow_physical_motion,
             "command_rpc_count": self._command_rpc_count,
+            "max_planning_step_rad": self.max_planning_step_rad,
         }
 
 

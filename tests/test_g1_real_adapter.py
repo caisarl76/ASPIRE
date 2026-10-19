@@ -267,3 +267,19 @@ def test_single_arm_trajectory_holds_the_idle_arm_at_its_chain_target():
         np.testing.assert_array_equal(codec.arms_from_upper_body(env.last_command()[0])[1], left)
     finally:
         adapter.close()
+
+
+def test_metadata_caps_planning_steps_and_batches_blend_from_the_chain(adapter, monkeypatch):
+    # 0.5 rad/s over a 20 ms control period
+    assert adapter.get_controller_metadata()["max_planning_step_rad"] == pytest.approx(0.01)
+    seen = {}
+    env = adapter.native_env
+    real = env.execute_action_batch
+
+    def capture(batch, **kwargs):
+        seen.update(kwargs)
+        return real(batch, **kwargs)
+
+    monkeypatch.setattr(env, "execute_action_batch", capture)
+    adapter.execute_trajectory(_right_trajectory(adapter, 0.05))
+    assert seen["start_interp_s"] == pytest.approx(0.2)

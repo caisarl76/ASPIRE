@@ -1336,8 +1336,10 @@ class CapApi:
                 steps_executed=0,
                 error=ApiError(ErrorCode.INVALID_REQUEST, str(exc)),
             )
-        result = self._execute_pose(target_pose, tolerance, max_steps, arm, strategy)
         rounds = int(getattr(self._adapter, "pose_correction_rounds", 0))
+        result = self._execute_pose(
+            target_pose, tolerance, max_steps, arm, strategy, correcting=rounds > 0
+        )
         commanded = target_pose
         for round_index in range(1, rounds + 1):
             error_m = _pose_tolerance_miss(result)
@@ -1346,7 +1348,7 @@ class CapApi:
             measured = self._execution_state(result).end_effector_poses[arm]
             commanded = _corrected_pose(commanded, target_pose, measured)
             result = self._execute_pose(
-                commanded, tolerance, max_steps, arm, strategy, goal=target_pose
+                commanded, tolerance, max_steps, arm, strategy, goal=target_pose, correcting=True
             )
             result = _with_correction_diagnostics(result, round_index, commanded, target_pose)
             new_error_m = _pose_tolerance_miss(result)
@@ -1362,8 +1364,15 @@ class CapApi:
         arm: str,
         strategy: MotionStrategy | None,
         goal: Pose | None = None,
+        correcting: bool = False,
     ) -> ExecutionResult:
-        """Plan to and execute ``target_pose``; verify against ``goal`` (default: the target)."""
+        """Plan to and execute ``target_pose``; verify against ``goal`` (default: the target).
+
+        With ``correcting``, an execution that only failed the adapter's joint
+        residual check still gets the pose check: for a tracking controller
+        that residual is the bias the correction rounds exist to remove, and
+        the pose error is the criterion that decides them.
+        """
         plan = self._stage(
             "plan_motion",
             self.plan_motion,
@@ -1391,7 +1400,7 @@ class CapApi:
             self.execute_trajectory,
             plan.trajectory,
         )
-        if not execution.ok:
+        if not execution.ok and not (correcting and _residual_only_failure(execution)):
             return execution
         return self._validate_pose_execution(execution, goal or target_pose, tolerance, arm)
 
@@ -2087,6 +2096,12 @@ class CapApi:
             # those are goal ranges, not per-tick steps, so cap interpolation
             # steps at the conservative fallback either way.
             limits = np.minimum(direction_limits / frequency, fallback)
+            planning_cap = (
+                metadata.get("max_planning_step_rad") if callable(metadata_getter) else None
+            )
+            if planning_cap is not None:
+                # A tracking controller can be out-run by the stream clamp alone.
+                limits = np.minimum(limits, float(planning_cap))
             if (
                 low.size < offset + joint_dimension
                 or high.size < offset + joint_dimension
@@ -2127,6 +2142,16 @@ __all__ = ["CapApi"]
 
 _POSE_CORRECTION_MAX_OFFSET_M = 0.05  # per axis, command minus goal
 _POSE_CORRECTION_STALL_RATIO = 0.75  # a round must beat this fraction of the previous error
+
+
+def _residual_only_failure(execution: ExecutionResult) -> bool:
+    """The batch streamed and settled but the arm ended off its final waypoint."""
+    error = execution.error
+    return (
+        error is not None
+        and execution.final_observation is not None
+        and "joint_residual_rad" in error.details
+    )
 
 
 def _pose_tolerance_miss(result: ExecutionResult) -> float | None:

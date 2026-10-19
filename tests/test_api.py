@@ -1262,3 +1262,65 @@ def test_move_to_pose_without_correction_rounds_is_single_shot() -> None:
 
     assert not result.ok and len(ik.targets) == 1
     assert "correction_rounds" not in result.error.details
+
+
+class _CappedPlanningAdapter(FakeAdapter):
+    """Absolute-mode bounds plus the planning cap a lagging tracker (G1/SONIC) declares."""
+
+    def get_controller_metadata(self) -> dict:
+        return {
+            "control_frequency_hz": 20.0,
+            "control_period_s": 0.05,
+            "arm_names": ["primary"],
+            "action_lower_bounds": [-1.0] * 7,
+            "action_upper_bounds": [1.0] * 7,
+            "max_planning_step_rad": 0.01,
+        }
+
+
+def test_interpolation_honours_the_adapter_planning_step_cap() -> None:
+    api = CapApi(_CappedPlanningAdapter(), ik_providers={"pyroki": FakeIK(np.full(7, 0.1))})
+
+    plan = api.plan_motion(_pose(), strategy=MotionStrategy(ik_solver="pyroki"))
+
+    assert plan.ok and len(plan.trajectory.joint_positions) == 10  # 0.1 rad / 0.01, not 0.1 / 0.05
+    assert plan.diagnostics["max_joint_delta_rad"] == pytest.approx(0.01)
+
+
+class _LaggingPlant(_BiasedPlant):
+    """Streams fine but ends off its final waypoint: the adapter's residual failure."""
+
+    def execute_trajectory(self, trajectory: object) -> ExecutionResult:
+        result = super().execute_trajectory(trajectory)
+        return replace(
+            result,
+            ok=False,
+            status=None,  # recomputed from ok/error
+            error=ApiError(
+                ErrorCode.EXECUTION_FAILED,
+                "the arm did not track the commanded motion",
+                details={"joint_residual_rad": {"primary": 0.12}},
+            ),
+        )
+
+
+def test_move_to_pose_corrects_through_a_residual_only_execution_failure() -> None:
+    ik = FakeIK(np.full(7, 0.1))
+    api = CapApi(_LaggingPlant(ik, gain=0.6), ik_providers={"pyroki": ik})
+
+    result = api.move_to_pose(_forward_10cm(), tolerance=0.015)
+
+    assert result.ok and result.diagnostics["correction_rounds"] == 2
+    assert result.diagnostics["joint_target_converged"] is False
+
+
+def test_residual_failure_is_returned_untouched_without_correction_rounds() -> None:
+    ik = FakeIK(np.full(7, 0.1))
+    plant = _LaggingPlant(ik, gain=0.6)
+    plant.pose_correction_rounds = 0
+    api = CapApi(plant, ik_providers={"pyroki": ik})
+
+    result = api.move_to_pose(_forward_10cm(), tolerance=0.015)
+
+    assert not result.ok and result.error.code == ErrorCode.EXECUTION_FAILED
+    assert len(ik.targets) == 1
