@@ -73,12 +73,19 @@ def run_segments(env, segment_m: float, partial: dict) -> dict:
     # so segments use its default timing; the actual speed is the logged duration_s.
     strategy = MotionStrategy(ik_solver="mink", trajectory_planner="interpolation")
     rows = partial.setdefault("segments", [])
+    # Two fixed targets from the starting pose, retract first (forward is out of
+    # reach from home). Chaining from each measured pose instead let every miss
+    # accumulate until a target left the workspace (ik_unreachable on a real run).
+    first = env.get_observations(side)
+    quat_wxyz = np.roll(first["ee_quat"], 1)
+    targets = [
+        Pose(first["ee_pos"] - np.array([segment_m, 0.0, 0.0]), quat_wxyz, "torso"),
+        Pose(first["ee_pos"].copy(), quat_wxyz, "torso"),
+    ]
     for i in range(SEGMENTS):
-        obs = env.get_observations(side)
-        start = obs["ee_pos"]
-        quat_wxyz = np.roll(obs["ee_quat"], 1)
-        sign = -1.0 if i % 2 == 0 else 1.0  # retract first: forward is out of reach from home
-        target = Pose(start + np.array([sign * segment_m, 0.0, 0.0]), quat_wxyz, "torso")
+        start = env.get_observations(side)["ee_pos"]
+        target = targets[i % 2]
+        sign = -1.0 if i % 2 == 0 else 1.0
         t0 = time.monotonic()
         result = api.move_to_pose(target, arm=side, strategy=strategy)
         duration = time.monotonic() - t0
@@ -90,19 +97,36 @@ def run_segments(env, segment_m: float, partial: dict) -> dict:
         ok = (
             bool(result.ok) and pos <= SEGMENT_MAX_POSITION_M and rot <= SEGMENT_MAX_ORIENTATION_RAD
         )
+        info = dict(result.diagnostics)
+        if result.error is not None:
+            info.update(result.error.details)
+        _, commanded_left, commanded_right = codec.arms_from_upper_body(env.last_command()[0])
+        commanded = commanded_left if side == "left" else commanded_right
         rows.append(
             {
                 "segment": i,
                 "dx_m": sign * segment_m,
+                "start_m": np.asarray(start).tolist(),
+                "target_m": target.position.tolist(),
                 "execution_ok": bool(result.ok),
                 "position_error_m": pos,
                 "orientation_error_rad": rot,
                 "duration_s": duration,
                 "ok": ok,
+                "correction_rounds": info.get("correction_rounds", 0),
+                "correction_offset_m": info.get("correction_offset_m"),
+                "joint_residual_rad": info.get("joint_residual_rad"),
+                "error": None
+                if result.error is None
+                else f"{result.error.code}: {result.error.message}",
+                "measured_joints": np.asarray(end["joint_pos"]).tolist(),
+                "commanded_joints": np.asarray(commanded).tolist(),
             }
         )
         print(
             f"  segment {i}: ok={result.ok} pos {pos * 1000:.1f} mm rot {np.degrees(rot):.2f} deg"
+            f" rounds={info.get('correction_rounds', 0)} t={duration:.1f}s"
+            + ("" if result.error is None else f" [{result.error.code}]")
         )
     worst_pos = max(r["position_error_m"] for r in rows)
     worst_rot = max(r["orientation_error_rad"] for r in rows)

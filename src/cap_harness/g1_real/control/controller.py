@@ -29,6 +29,7 @@ from cap_harness.yam_real.control.controller import _raise_if_stopped, _sample
 _Q17 = slice(0, UPPER_BODY_DOF)
 _LEFT_HAND = slice(UPPER_BODY_DOF, UPPER_BODY_DOF + HAND_DOF)
 _RIGHT_HAND = slice(UPPER_BODY_DOF + HAND_DOF, UPPER_BODY_DOF + 2 * HAND_DOF)
+_ARMS = slice(3, UPPER_BODY_DOF)  # SONIC-17 minus the three waist joints
 
 
 def _rows(
@@ -117,15 +118,38 @@ def execute_upper_body_trajectory(
     stream_s = float(ts[-1])
     final = rows[-1]
 
+    # A tracking controller lags the chain by its bias, and a plan starts at the
+    # measurement, so the first tick would otherwise walk the command back by
+    # that bias before moving. The arm columns start at the chain instead and
+    # the offset fades out over the stream, so the final waypoint is unchanged.
+    # (Waist is held, hands carry their own targets, and an uncommanded arm's
+    # rows already equal the chain, so those columns get a zero offset.)
+    start_offset = np.zeros(rows.shape[1])
+    if not getattr(env, "_resume_from_measured", False):
+        # After a feedback outage the first publish re-seeds the chain from the
+        # measurement (SONIC idled the arms meanwhile), so there is no bias to
+        # carry and the pre-outage chain must not be re-sent.
+        start_offset[_ARMS] = (emitted() - rows[0])[_ARMS]
+
     def tick(row: np.ndarray) -> dict[str, Any] | None:
         return env._send_tick(row[_Q17], row[_LEFT_HAND], row[_RIGHT_HAND], hz=hz)
+
+    def command_at(t_now: float) -> np.ndarray:
+        if stream_s <= 1e-9:
+            return rows[-1]
+        # Cosine ease: zero velocity at both ends of the stream. SONIC takes the
+        # streamed velocity as an input, so a linear ramp's velocity steps at
+        # the start and the end are felt as jerks.
+        phase = min(max(t_now / stream_s, 0.0), 1.0)
+        tau = stream_s * (1.0 - math.cos(math.pi * phase)) / 2.0
+        return _sample(ts, rows, tau) + start_offset * (1.0 - phase)
 
     t0 = time.monotonic()
     command_count = 0
     while True:
         _raise_if_stopped("during trajectory execution", dt)
         t_now = time.monotonic() - t0
-        if (refused := tick(_sample(ts, rows, t_now))) is not None:
+        if (refused := tick(command_at(t_now))) is not None:
             return refused
         command_count += 1
         if t_now >= stream_s:

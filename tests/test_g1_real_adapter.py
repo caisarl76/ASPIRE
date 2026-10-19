@@ -282,4 +282,6 @@ def test_metadata_caps_planning_steps_and_batches_blend_from_the_chain(adapter, 
 
     monkeypatch.setattr(env, "execute_action_batch", capture)
     adapter.execute_trajectory(_right_trajectory(adapter, 0.05))
-    assert seen["start_interp_s"] == pytest.approx(0.2)
+    # The profile keeps the blend at 0: the stream starts at the chain itself.
+    assert seen["start_interp_s"] == pytest.approx(0.0)
+    assert adapter.trajectory_start_interp_s == 0.0

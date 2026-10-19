@@ -457,3 +457,35 @@ def test_go_home_opens_every_hand_joint(env):
     assert env.go_home(duration_s=0.1, keep_grippers=False)["success"] is True
     np.testing.assert_array_equal(env.body.commands[-1][2], np.zeros(7))
     np.testing.assert_array_equal(env.body.commands[-1][3], np.zeros(7))
+
+
+def _right_batch(env, first_delta: float, last_delta: float, duration_s: float):
+    left = env.get_observations("left")["joint_pos"]
+    _, _, home = codec.arms_from_upper_body(env.last_command()[0])
+    right0, right1 = home.copy(), home.copy()
+    right0[0] += first_delta
+    right1[0] += last_delta
+    return YamActionBatch.joint_abs(
+        [0.0, duration_s], [left, left], [right0, right1], source="test"
+    )
+
+
+def test_batch_starts_at_the_chain_not_the_lagging_measurement(env):
+    chain = env.last_command()[0].copy()
+    env.body.commands.clear()
+    # A plan starts at the measurement, here 0.05 rad behind the chain on the
+    # right shoulder pitch (SONIC-17 index 4); the stream must not walk back.
+    env.execute_action_batch(_right_batch(env, -0.05, 0.10, 0.4), settle_s=0.0)
+    sent = np.array([c[0][4] for c in env.body.commands])
+    assert sent[0] == pytest.approx(chain[4], abs=1e-6)  # first tick is microseconds after t0
+    assert np.all(sent >= chain[4] - 1e-6)  # monotone forward, never below the chain
+    assert sent[-1] == pytest.approx(chain[4] + 0.10, abs=1e-9)
+
+
+def test_stream_eases_in_and_out(env):
+    env.body.commands.clear()
+    env.execute_action_batch(_right_batch(env, 0.0, 0.20, 0.6), settle_s=0.0)
+    steps = np.abs(np.diff([c[0][4] for c in env.body.commands]))
+    mid = steps[len(steps) // 2]
+    assert steps[0] < 0.25 * mid and steps[-1] < 0.25 * mid  # zero-velocity ends
+    assert mid <= 0.03  # still under the per-tick clamp
