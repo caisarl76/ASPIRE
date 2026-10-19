@@ -28,18 +28,30 @@ point `sam3_url` / `curobo_url` there (profile fields, or `--sam3-url` /
 ## 2. Start order
 
 1. Stop any PICO manager / XR bridge on `.62`.
-2. PC2, camera (the fork's RealSense driver patch under `gear_sonic/camera/` must
-   already be deployed to PC2's checkout):
+2. PC2, camera. PC2's checkout (`~/GR00T-WholeBodyControl`, NVlabs `main` plus
+   uncommitted deploy edits that the built binary depends on) carries the fork's
+   RealSense depth patch as an overlay of `gear_sonic/camera/` from fork commit
+   `6a1741c` (deployed 2026-10-19; `git status` shows the three files modified,
+   `git checkout -- gear_sonic/camera` reverts). RealSense init takes about 20 s
+   before the port binds:
 
    ```bash
-   tmux new-session -d -s gr00t_camera_5555 "cd <fork> && exec <fork>/.venv_camera/bin/python -m gear_sonic.camera.composed_camera --ego-view-camera realsense --realsense-enable-depth --port 5555"
+   tmux new-session -d -s gr00t_camera_5555 "cd ~/GR00T-WholeBodyControl && ~/GR00T-WholeBodyControl/.venv_camera/bin/python -u -m gear_sonic.camera.composed_camera --ego-view-camera realsense --realsense-enable-depth --port 5555 > /tmp/gr00t_camera_5555.log 2>&1"
+   tail -f /tmp/gr00t_camera_5555.log   # until "Sensor server running at tcp://*:5555"
    ```
+
+   Verified 2026-10-19 from the workstation: 640x480 RGB, aligned depth (all
+   pixels valid, 1.2 to 3.0 m in the lab), fx 606.6 / fy 607.1, about 15 Hz.
 
 3. PC2, deploy; wait for `Init done`:
 
    ```bash
-   cd gear_sonic_deploy && scripts/preflight.sh && ./deploy.sh --input-type zmq_manager --output-type zmq --zmq-host 192.168.0.62 real
+   cd gear_sonic_deploy && ./deploy.sh --input-type zmq_manager --output-type zmq --zmq-host 192.168.0.62 real
    ```
+
+   (The fork's interactive `scripts/preflight.sh` safety checklist is not in PC2's
+   checkout; run through its items by hand: harness, 3 m clear zone, spotter,
+   keyboard `O` drilled.)
 
 4. Workstation, providers (skip if running on the other GPU host):
 
@@ -58,7 +70,8 @@ point `sam3_url` / `curobo_url` there (profile fields, or `--sam3-url` /
    ```
 
    `--engage` requires `--allow-motion`; the server exits non-zero when the
-   feedback is stale. Without `--engage` nothing is sent until the operator
+   feedback is stale. On `.62` port 8080 belongs to a Docker container, so add
+   `--viser-port 8081` (or `--no-viser`). Without `--engage` nothing is sent until the operator
    presses the **Engage SONIC** button on the Viser page (http://127.0.0.1:8080,
    camera-only for G1). The same button re-engages after a feedback outage.
 6. Operator confirms the robot stands in PLANNER idle with fresh feedback. The
