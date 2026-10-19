@@ -94,6 +94,20 @@ planner's own heading. Sim cannot catch this (the sim robot starts at yaw zero),
 so the first engage after any change here is done with the robot **hanging,
 feet off the floor**: the legs must stay still, not step or turn.
 
+**First engage on a fresh deploy (fixed 2026-10-19).** SONIC publishes no
+feedback before `start`, so ASPIRE cannot know where the arms are. It used to
+stream the profile home blind before `start`, and SONIC's first control tick
+drove the arms straight there from wherever they hung: an abrupt jump, and the
+arms were still moving when the first plan ran (`stale_plan`). Now the first
+engage sends `start` alone, lets SONIC bring the arms up through its own idle
+motion, waits for feedback and for the arms to be still (below 0.1 rad/s for
+0.3 s, at most 5 s), then seeds the stream from the measured pose. Expect
+SONIC's normal start motion, then nothing from ASPIRE until a command.
+
+**After a PC2 reboot** the camera server is gone (its tmux session and
+`/tmp` log do not survive); restart it as in section 2 before any run that
+reads images, including the acceptance segments, which build observations.
+
 In `zmq_manager` mode SONIC has no `]` start key. ASPIRE's operator-only engage path
 waits for fresh feedback, streams a hold at the measured pose for 0.2 s, sends
 `command{start=1, planner=1}` once, then starts the 50 Hz keep-alive. SONIC drops

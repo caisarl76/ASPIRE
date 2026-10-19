@@ -188,20 +188,45 @@ class _FeedbackAfterStart(FakeBodyClient):
         self.started = True
 
 
-def test_engage_holds_home_then_starts_sonic_before_any_feedback():
+def test_first_engage_streams_nothing_before_start_then_seeds_from_measured():
     cfg = load_g1_station_config("g1-lab")
     fake = _FeedbackAfterStart(tau_s=0.01)
     e = G1Env(cfg, fake, camera=SyntheticCamera())
     try:
         result = e.engage()
-        home = codec.upper_body_from_arms(
-            cfg.waist_targets, cfg.arms["left"].home_joints, cfg.arms["right"].home_joints
-        )
         assert result["already_engaged"] is False and fake.start_count == 1
-        assert fake.commands_before_start >= 1  # the hold went out before start
-        np.testing.assert_allclose(fake.commands[0][0], home, atol=1e-9)
+        # A blind target before start is what SONIC jumps the arms to on its first tick.
+        assert fake.commands_before_start == 0
+        np.testing.assert_allclose(fake.commands[0][0], e.measured_command()[0], atol=1e-6)
         assert e.keep_alive_running
         assert e.engage()["already_engaged"] is True and fake.start_count == 1
+    finally:
+        e.close()
+
+
+def test_first_engage_waits_for_sonic_start_motion_to_finish():
+    cfg = load_g1_station_config("g1-lab")
+
+    class _ArmsMoveAfterStart(_FeedbackAfterStart):
+        moving_s = 0.3
+
+        def get_observations(self):
+            obs = super().get_observations()
+            if obs is not None and time.monotonic() - self.started_at < self.moving_s:
+                obs = {**obs, "right_joint_vel": np.full(7, 0.5)}
+            return obs
+
+        def send_start(self):
+            self.started_at = time.monotonic()
+            super().send_start()
+
+    fake = _ArmsMoveAfterStart(tau_s=0.01)
+    e = G1Env(cfg, fake, camera=SyntheticCamera())
+    try:
+        e.engage()
+        # seeded only after the motion stopped and stayed still for the hold window
+        assert fake.commands[0] is not None
+        assert time.monotonic() - fake.started_at >= fake.moving_s + e.engage_settle_hold_s
     finally:
         e.close()
 

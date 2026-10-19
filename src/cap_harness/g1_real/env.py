@@ -53,6 +53,10 @@ class G1Env:
     dof = ARM_DOF
     #: How long engage() waits for SONIC's first feedback after sending ``start``.
     engage_feedback_timeout_s = 5.0
+    # First engage only: SONIC's own start motion must finish before the seed.
+    engage_settle_timeout_s = 5.0
+    engage_settle_velocity_rad_s = 0.1
+    engage_settle_hold_s = 0.3
 
     def __init__(
         self,
@@ -274,8 +278,8 @@ class G1Env:
         if self.body.get_observations() is None:
             # SONIC publishes feedback only once its control loop runs (the
             # deploy's CONTROL state), so the very first engage has nothing to
-            # seed from: hold the profile home blind, send start, wait for
-            # feedback, then continue exactly as a re-engage would.
+            # seed from: send start alone, wait for feedback and still arms,
+            # then continue exactly as a re-engage would.
             self._start_without_feedback()
             started = True
         age = self.body.feedback_age_s()
@@ -310,42 +314,53 @@ class G1Env:
         return dict(self._engaged)
 
     def _start_without_feedback(self) -> None:
-        """Hold the profile home on the stream, send ``start``, then wait for feedback.
+        """Send ``start`` with nothing streamed, then wait for feedback and still arms.
 
-        The hold goes out with the stale check bypassed because there is no
-        feedback to check yet; it is the profile's home (what Home means on this
-        station), which is also where SONIC takes the arms when control starts.
+        Before ``start`` SONIC publishes no feedback, so ASPIRE cannot know where
+        the arms are. Streaming any target here (this used to hold the profile
+        home) makes SONIC's first control tick drive the arms straight to it from
+        wherever they hang: an abrupt jump on the real robot, invisible in sim
+        where the arms start near home. With only ``start``, SONIC moves the arms
+        through its own idle motion, which is its normal start. Once feedback
+        flows and the arms are still, :meth:`engage` seeds the chain from the
+        measurement, so the first ASPIRE target is where the arms already are.
         Raises when SONIC stays silent past ``engage_feedback_timeout_s``.
         """
-        cfg = self.config
-        q17 = codec.upper_body_from_arms(
-            cfg.waist_targets, cfg.arms["left"].home_joints, cfg.arms["right"].home_joints
+        dt = 1.0 / float(self.config.controller.command_stream_hz)
+        self.body.send_start()
+        deadline = time.monotonic() + float(self.engage_feedback_timeout_s)
+        while self.body.get_observations() is None:
+            if time.monotonic() > deadline:
+                raise RuntimeError(
+                    f"no SONIC feedback within {self.engage_feedback_timeout_s:.1f} s "
+                    "of start; not engaging"
+                )
+            time.sleep(dt)
+        # Seeding mid-motion would stop the arms where they happen to be; wait
+        # for SONIC's own start motion to finish first (bounded: a robot that
+        # never settles is seeded anyway, which stops it rather than jumps it).
+        still_since: float | None = None
+        deadline = time.monotonic() + float(self.engage_settle_timeout_s)
+        while time.monotonic() < deadline:
+            obs = self.body.get_observations()
+            if obs is not None:
+                speed = max(
+                    float(np.max(np.abs(obs["left_joint_vel"]))),
+                    float(np.max(np.abs(obs["right_joint_vel"]))),
+                )
+                now = time.monotonic()
+                if speed < self.engage_settle_velocity_rad_s:
+                    still_since = now if still_since is None else still_since
+                    if now - still_since >= self.engage_settle_hold_s:
+                        _log.info("SONIC started; arms still, seeding from the measured pose")
+                        return
+                else:
+                    still_since = None
+            time.sleep(dt)
+        _log.warning(
+            "arms still moving %.1f s after SONIC start; seeding from the measured pose anyway",
+            self.engage_settle_timeout_s,
         )
-        lh = np.asarray(cfg.hands["left"].open, dtype=np.float64).reshape(HAND_DOF)
-        rh = np.asarray(cfg.hands["right"].open, dtype=np.float64).reshape(HAND_DOF)
-        self.body.seed_hands(lh, rh)
-        with self._lock:
-            self._last_cmd = (q17, lh, rh)
-        dt = 1.0 / float(cfg.controller.command_stream_hz)
-        ticks = max(1, round(float(cfg.sonic.engage_hold_s) / dt))
-        self._streaming = True
-        try:
-            for _ in range(ticks):
-                self._send_tick(q17, lh, rh, allow_stale=True)
-                time.sleep(dt)
-            self.body.send_start()
-            deadline = time.monotonic() + float(self.engage_feedback_timeout_s)
-            while self.body.get_observations() is None:
-                if time.monotonic() > deadline:
-                    raise RuntimeError(
-                        f"no SONIC feedback within {self.engage_feedback_timeout_s:.1f} s "
-                        "of start; not engaging"
-                    )
-                self._send_tick(q17, lh, rh, allow_stale=True)
-                time.sleep(dt)
-        finally:
-            self._streaming = False
-        _log.info("SONIC started from the profile home; feedback is flowing")
 
     def _not_ready(self) -> dict[str, Any] | None:
         """The refusal for a command before engage or after the keep-alive died, else ``None``."""
