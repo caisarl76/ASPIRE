@@ -1,6 +1,7 @@
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
+import numpy as np
 import pytest
 
 from cap_harness.g1_real.config import load_g1_station_config
@@ -51,3 +52,12 @@ def test_profile_declares_sonic_tracking_knobs():
     assert controller.plan_max_joint_velocity_rad_s == pytest.approx(0.5)
     assert controller.trajectory_start_interp_s == 0.0  # the stream starts at the chain itself
     assert controller.settle_until_still_max_s == pytest.approx(3.0)
+
+
+def test_main_robot_profile_points_at_pc2_222():
+    lab, main = load_g1_station_config("g1-lab"), load_g1_station_config("g1-222")
+    assert main.station == "g1-222"
+    assert main.sonic.feedback_host == "192.168.0.222" and main.camera.host == "192.168.0.222"
+    # same body, hands, and camera mounting as g1-lab
+    np.testing.assert_array_equal(main.camera.base_from_camera, lab.camera.base_from_camera)
+    np.testing.assert_array_equal(main.hands["right"].closed, lab.hands["right"].closed)

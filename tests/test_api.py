@@ -1325,3 +1325,15 @@ def test_residual_failure_is_returned_untouched_without_correction_rounds() -> N
 
     assert not result.ok and result.error.code == ErrorCode.EXECUTION_FAILED
     assert len(ik.targets) == 1
+
+
+def test_close_gripper_records_where_a_contact_grip_stopped() -> None:
+    adapter = FakeAdapter()
+    adapter.close_gripper = lambda *, arm="primary": ExecutionResult(  # type: ignore[method-assign]
+        ok=True, steps_executed=9, diagnostics={"contact": True, "gripper_position": 0.62}
+    )
+    api = CapApi(adapter, ik_providers={"pyroki": FakeIK(np.full(7, 0.1))})
+
+    assert api.close_gripper().ok
+    # later arm moves carry 0.62 and hold the grip, rather than 0.0 (full close)
+    assert api._commanded_gripper_positions["primary"] == pytest.approx(0.62)

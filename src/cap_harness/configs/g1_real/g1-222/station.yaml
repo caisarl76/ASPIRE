@@ -1,0 +1,103 @@
+schema_version: 1
+station: g1-222
+# Main robot: PC2 192.168.0.222 (`ssh pc2_222`), Dex3 hands. Same body and head
+# camera mounting as g1-lab (PC2 .223, rubber hands); only the hosts differ.
+base_frame: torso
+default_arm: right
+arm_aliases:
+  primary: right
+  secondary: left
+
+# Arm limits: gear_sonic/data/robots/g1/g1_dual_arm.urdf. Hand names and ranges:
+# gear_sonic_deploy/g1/g1_29dof_with_hand.xml (the dual-arm URDF has rubber hands).
+arms:
+  left:
+    joint_names: [left_shoulder_pitch_joint, left_shoulder_roll_joint, left_shoulder_yaw_joint, left_elbow_joint, left_wrist_roll_joint, left_wrist_pitch_joint, left_wrist_yaw_joint]
+    lower: [-3.0892, -1.5882, -2.618, -1.0472, -1.972222054, -1.614429558, -1.614429558]
+    upper: [2.6704, 2.2515, 2.618, 2.0944, 1.972222054, 1.614429558, 1.614429558]
+    home_joints: [0.2, 0.2, 0.0, 0.6, 0.0, 0.0, 0.0]
+  right:
+    joint_names: [right_shoulder_pitch_joint, right_shoulder_roll_joint, right_shoulder_yaw_joint, right_elbow_joint, right_wrist_roll_joint, right_wrist_pitch_joint, right_wrist_yaw_joint]
+    lower: [-3.0892, -2.2515, -2.618, -1.0472, -1.972222054, -1.614429558, -1.614429558]
+    upper: [2.6704, 1.5882, 2.618, 2.0944, 1.972222054, 1.614429558, 1.614429558]
+    home_joints: [0.2, -0.2, 0.0, 0.6, 0.0, 0.0, 0.0]
+
+hands:
+  left:
+    joint_names: [left_hand_thumb_0_joint, left_hand_thumb_1_joint, left_hand_thumb_2_joint, left_hand_middle_0_joint, left_hand_middle_1_joint, left_hand_index_0_joint, left_hand_index_1_joint]
+    open: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    closed: [0.0, 0.0, 1.75, -1.57, -1.75, -1.57, -1.75]
+    lower: [-1.0472, -0.724312, 0.0, -1.8326, -2.0944, -1.8326, -2.0944]
+    upper: [1.0472, 1.0472, 2.0944, 0.191986, 0.0, 0.191986, 0.0]
+    max_step_rad: 0.25
+  right:
+    joint_names: [right_hand_thumb_0_joint, right_hand_thumb_1_joint, right_hand_thumb_2_joint, right_hand_index_0_joint, right_hand_index_1_joint, right_hand_middle_0_joint, right_hand_middle_1_joint]
+    open: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    closed: [0.0, 0.0, -1.75, 1.57, 1.75, 1.57, 1.75]
+    lower: [-1.0472, -1.0472, -2.0944, -0.191986, 0.0, -0.191986, 0.0]
+    upper: [1.0472, 0.724312, 0.0, 1.8326, 2.0944, 1.8326, 2.0944]
+    max_step_rad: 0.25
+
+waist_targets: [0.0, 0.0, 0.0]
+
+sonic:
+  command_bind: "tcp://*:5556"
+  feedback_host: 192.168.0.222
+  feedback_port: 5557
+  feedback_topic: g1_debug
+  mode: 0
+  speed: -1.0
+  height: -1.0
+  feedback_stale_s: 0.5
+  engage_hold_s: 0.2
+
+controller:
+  control_frequency_hz: 50
+  command_stream_hz: 50
+  max_joint_step_rad: 0.03
+  final_joint_tolerance_rad: 0.03
+  # SONIC reaches a steady fraction of a commanded end-effector move (sim2sim:
+  # 1-3 cm short). Each round re-plans to the last command plus the measured
+  # residual; 0 disables. Stalls and a 5 cm per-axis offset cap end it early.
+  pose_correction_rounds: 3
+  # The interpolation planner otherwise spaces waypoints at the stream clamp
+  # (0.03 rad / 20 ms = 1.5 rad/s): a 15 cm reach streamed in 0.3 s is a step
+  # SONIC cannot follow and looks jerky. 0.5 rad/s makes it ~0.8 s.
+  plan_max_joint_velocity_rad_s: 0.5
+  # The stream starts every batch at the chain target with a fading offset and
+  # eases in and out (controller.py), so no extra blend is needed here.
+  trajectory_start_interp_s: 0.0
+  # The real arm keeps converging for 1-3 s after the stream ends. A batch's
+  # settle (1 s for trajectories) is extended until the arms are still, up to
+  # this long, so the residual and pose checks (and correction rounds) see where
+  # the arm stops rather than a transient; measuring early made corrections
+  # overshoot by 20-35 mm on the robot (2026-10-20). 0 keeps the fixed settle.
+  settle_until_still_max_s: 3.0
+
+camera:
+  role: ego_view
+  host: 192.168.0.222
+  port: 5555
+  depth_scale_m: 0.001
+  max_acquisition_elapsed_s: 0.5
+  # Drop the floor from depth: the dominant level plane among points more than
+  # 0.5 m below the torso origin (the floor is ~0.84 m below it standing, tables
+  # and the case top are within ~0.1 m of it). Fitted per frame, since SONIC's
+  # stance tilts the floor a degree or two in the torso frame.
+  floor_below_z_m: -0.5
+  # T_torso_from_optical: d435_joint of g1_dual_arm.urdf (fixed child of torso_link,
+  # xyz 0.0576235 0.01753 0.41987, rpy 0 0.8307767239493009 0) times the body-to-optical
+  # rotation rpy (-pi/2, 0, -pi/2), so the frame is Z forward, X right, Y down.
+  base_from_camera:
+    - [0.000000, -0.738455, 0.674302, 0.057624]
+    - [-1.000000, 0.000000, 0.000000, 0.017530]
+    - [0.000000, -0.674302, -0.738455, 0.419870]
+    - [0.000000, 0.000000, 0.000000, 1.000000]
+
+planning_workspace:
+  lower: [-0.2, -0.8, -0.6]
+  upper: [0.9, 0.8, 0.6]
+
+model:
+  xml: g1_real/description/g1_upper_body.xml
+  urdf: g1_real/description/g1_dual_arm.urdf

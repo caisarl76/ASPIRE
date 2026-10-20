@@ -23,6 +23,8 @@ if [[ "${1:-}" == "--allow-motion" ]]; then
     -c 'mcp_servers.cap.tools.cap_move_synchronized.approval_mode="approve"'
     -c 'mcp_servers.cap.tools.cap_move_to_joints.approval_mode="approve"'
     -c 'mcp_servers.cap.tools.cap_set_gripper.approval_mode="approve"'
+    -c 'mcp_servers.cap.tools.cap_open_gripper.approval_mode="approve"'
+    -c 'mcp_servers.cap.tools.cap_close_gripper.approval_mode="approve"'
     -c 'mcp_servers.cap.tools.cap_g1_real__set_hand_joints.approval_mode="approve"'
   )
   ASPIRE_STARTUP="This is a motion-enabled startup. Discover the CAP tools, then call cap_program_go_home exactly once before the operator task. This opens both grippers and homes both arms. Wait for its terminal result and fresh observations. Report READY with the measured home_verified, joint residuals, and gripper state. If Home fails or either gripper is not open, report the failure and stop instead of starting the task."

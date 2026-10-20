@@ -10,6 +10,7 @@ by joint.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import numpy as np
@@ -20,6 +21,15 @@ from cap_harness.g1_real import codec
 from cap_harness.g1_real.registry import G1RealTaskRegistry
 from cap_harness.yam_real.adapter import YamRealAdapter
 from cap_harness.yam_real.registry import YamRealTaskRegistry
+
+# Contact-aware Dex3 close (close_gripper). Closure c runs 0 (open) to 1 (the
+# profile's full-close pose); it advances in steps, each given time to settle,
+# and stops when the fingers lag their command, i.e. are blocked by an object.
+GRIP_STEP = 0.05
+GRIP_SETTLE_S = 0.15
+GRIP_CONTACT_LAG_RAD = 0.15  # per moving joint
+GRIP_CONTACT_JOINTS = 2  # blocked joints that count as contact
+GRIP_SQUEEZE = 0.08  # closure added past the contact point: a firm, not crushing, hold
 
 
 class G1RealAdapter(YamRealAdapter):
@@ -127,6 +137,70 @@ class G1RealAdapter(YamRealAdapter):
             gripper = {side: codec.hand_scalar(joints, hand.open, hand.closed)}
         self._record(execution, gripper=gripper)
         return execution
+
+    def close_gripper(self, *, arm: str = "primary") -> ExecutionResult:
+        """Close a Dex3 hand until its fingers stop on an object, then squeeze lightly.
+
+        Steps the hand from where it is toward the profile's full-close pose
+        and watches the measured fingers: when at least two of them lag their
+        command by more than 0.15 rad they are blocked, and the hand is
+        commanded a little past where they stopped instead of to full close,
+        which would keep pushing into the object. Reports ``contact`` (False:
+        it closed on nothing), the final ``closure`` and the resulting
+        ``gripper_position`` scalar, which later arm moves hold.
+        """
+        side = self.resolve_arm(arm)
+        if side not in self.arms:
+            return self.set_hand_joints(arm, [])  # the same typed refusal
+        hand = self._env.config.hands[side]
+        opened = np.asarray(hand.open, dtype=np.float64)
+        span = np.asarray(hand.closed, dtype=np.float64) - opened
+        moving = np.abs(span) > 0.1
+
+        def pose(closure: float) -> list[float]:
+            return (opened + closure * span).tolist()
+
+        def measured() -> np.ndarray:
+            return np.asarray(self._env.get_observations(side)["hand_q"], dtype=np.float64)
+
+        _, *held = self._env.last_command()
+        closure = 1.0 - codec.hand_scalar(held[self.arms.index(side)], opened, hand.closed)
+        contact, steps, lag = False, 0, np.zeros(int(moving.sum()))
+        while closure < 1.0:
+            closure = min(1.0, closure + GRIP_STEP)
+            result = self.set_hand_joints(side, pose(closure))
+            steps += 1
+            if not result.ok:
+                return result
+            time.sleep(GRIP_SETTLE_S)
+            lag = np.abs(np.asarray(pose(closure)) - measured())[moving]
+            if int(np.sum(lag > GRIP_CONTACT_LAG_RAD)) >= GRIP_CONTACT_JOINTS:
+                contact = True
+                break
+        if contact:
+            reached = 1.0 - codec.hand_scalar(measured(), opened, hand.closed)
+            closure = min(1.0, reached + GRIP_SQUEEZE)
+            result = self.set_hand_joints(side, pose(closure))
+            steps += 1
+            if not result.ok:
+                return result
+            time.sleep(GRIP_SETTLE_S)
+        _, *held = self._env.last_command()
+        return ExecutionResult(
+            ok=True,
+            steps_executed=steps,
+            final_observation=self.get_observation(),
+            diagnostics={
+                "completion": "contact" if contact else "closed_empty",
+                "contact": contact,
+                "closure": round(float(closure), 4),
+                "gripper_position": codec.hand_scalar(
+                    held[self.arms.index(side)], opened, hand.closed
+                ),
+                "hand_q": measured().round(4).tolist(),
+                "max_finger_lag_rad": round(float(lag.max(initial=0.0)), 4),
+            },
+        )
 
     def get_hand_state(self) -> dict[str, list[float]]:
         """Measured Dex3 finger joints per hand; a read, not a command."""

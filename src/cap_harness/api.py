@@ -1484,7 +1484,12 @@ class CapApi:
         if callable(adapter_method):
             try:
                 result = adapter_method(arm=arm).public_view()
-                self._commanded_gripper_positions[arm] = 0.0
+                # Where the jaw was left, when the embodiment reports it (a
+                # contact-stopped Dex3 grip); later arm moves carry this value,
+                # and 0.0 would re-close the hand all the way onto the object.
+                self._commanded_gripper_positions[arm] = float(
+                    result.diagnostics.get("gripper_position", 0.0)
+                )
                 return result
             # Best-effort arm resolution must not mask the embodiment error.
             except Exception as exc:

@@ -23,14 +23,15 @@ robot rather than forcing a pose.
    it is an object.
 2. Approach from above in the `torso` frame: a pre-grasp pose above and slightly
    short of the bottle, then a bounded descent to side contact. Keep fingers open.
-3. Close with `cap_g1_real__set_hand_joints` (seven radians, Dex3 order, at most
-   0.25 rad per message). Start from the profile's full-close pose and close in steps;
-   stop when the returned `cap_g1_real__get_hand_state` and image show retained
-   contact without crushing. Finger closure alone is not a grasp.
+3. Close with `cap_close_gripper(arm="right")`: it closes in steps, stops when the
+   fingers meet the bottle and squeezes lightly. `contact: false` means the hand
+   closed on nothing; open with `cap_open_gripper` and correct the approach. For a
+   different finger shape use `cap_g1_real__set_hand_joints` (seven radians, Dex3
+   order, at most 0.25 rad per message). Finger closure alone is not a grasp.
 4. Lift a few centimetres. Verify the bottle follows from the returned image and the
    wrist joint change; a closure value or successful motion is not proof.
 5. Move to the place spot, lower in bounded steps, open the hand with
-   `cap_g1_real__set_hand_joints` (or `cap_set_gripper` to open), retract, and
+   `cap_open_gripper`, retract, and
    inspect that the bottle stands.
 6. Report the result and the evidence.
 

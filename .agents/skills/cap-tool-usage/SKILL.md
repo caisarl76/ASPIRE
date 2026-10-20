@@ -110,6 +110,12 @@ Applies when the capability graph shows `g1_real` (operator runbook: `docs/g1-re
 - The base frame is `torso` (`torso_link`); give pose targets in it.
 - Reach is short, about 0.55 m from the shoulder. Targets outside the joint limits are
   refused with "outside the configured limits"; reposition the target, not the tolerance.
+- **Grip (Dex3):** `cap_close_gripper(arm)` closes the hand in steps and stops when
+  the fingers are blocked by an object, then squeezes lightly; it reports
+  `contact` (False means it closed on nothing) and the `gripper_position` it left,
+  which later arm moves hold. `cap_open_gripper(arm)` opens the hand fully. Prefer
+  these to `cap_set_gripper(0.0)`, which drives to full close and keeps pushing into
+  the object. Contact is not proof of a grasp: lift a little and check the image.
 - `cap_set_gripper` maps its scalar between open (all zeros) and the profile's
   full-close pose. For finger articulation call
   `cap_g1_real__set_hand_joints(arm, joints)`: seven radians in Dex3 order, clamped to

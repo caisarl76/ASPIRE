@@ -204,6 +204,8 @@ def test_mcp_http_transport_exposes_only_configured_tools(rig):
             "cap_move_to_joints",
             "cap_move_synchronized",
             "cap_set_gripper",
+            "cap_open_gripper",
+            "cap_close_gripper",
             "cap_yam_real__get_controller_metadata",
             "cap_program_observe",
             "cap_program_go_home",

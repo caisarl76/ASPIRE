@@ -201,6 +201,8 @@ _DIRECT_BASE = frozenset(
         "move_to_pose",
         "move_synchronized",
         "set_gripper",
+        "open_gripper",
+        "close_gripper",
     }
 )
 _READ_ONLY_BASE = frozenset({"get_robot_state", "localize_object"})

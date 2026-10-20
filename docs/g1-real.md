@@ -36,6 +36,16 @@ never see it. The System 2 viewer shows the main camera's depth next to its RGB 
 (near red, far blue over 0.3 to 1.5 m, black where there is no depth or it was
 dropped). The depth view is for the operator; the agent still receives RGB only.
 
+**Main robot (PC2 `192.168.0.222`, `ssh pc2_222`, Dex3), set up 2026-10-20.** Use
+`--station g1-222` (same profile as `g1-lab` with the .222 hosts). Its checkout is
+NVlabs `087f9ac` with local edits; the camera package now carries the fork's depth
+patch (`6a1741c`), and the local camera edits it replaced (device selection, frame
+rate, depth switch, all included in the patch except a 30 fps default) are backed up
+in `~/aspire-backup-20261020` on .222. Another stack's `g1_head_camera_server.py`
+(`/dev/video4`, "egocentric") also serves port 5555 there and holds the RealSense;
+stop it before starting ASPIRE's camera server (section 2). The deploy there
+publishes `init_base_quat`, which the heading fix uses.
+
 Only one process can bind 5556 on the workstation. **Stop the PICO manager / XR
 bridge on `.62` before starting ASPIRE.** If SAM3/cuRobo run on another GPU host,
 point `sam3_url` / `curobo_url` there (profile fields, or `--sam3-url` /

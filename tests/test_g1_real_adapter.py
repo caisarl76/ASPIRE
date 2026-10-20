@@ -285,3 +285,64 @@ def test_metadata_caps_planning_steps_and_batches_blend_from_the_chain(adapter, 
     # The profile keeps the blend at 0: the stream starts at the chain itself.
     assert seen["start_interp_s"] == pytest.approx(0.0)
     assert adapter.trajectory_start_interp_s == 0.0
+
+
+class _BlockedRightHand(FakeBodyClient):
+    """The right hand's fingers stop at a fraction of their travel, as on a bottle."""
+
+    def __init__(self, hand_open, hand_closed, limit, **kwargs):
+        super().__init__(**kwargs)
+        self._open, self._span, self.limit = (
+            np.asarray(hand_open, float),
+            np.asarray(hand_closed, float) - np.asarray(hand_open, float),
+            limit,
+        )
+
+    def get_observations(self):
+        obs = super().get_observations()
+        q = np.asarray(obs["right_hand_q"], float)
+        safe = np.where(np.abs(self._span) > 1e-9, self._span, 1.0)
+        frac = np.clip((q - self._open) / safe, None, self.limit)
+        return {
+            **obs,
+            "right_hand_q": np.where(np.abs(self._span) > 1e-9, self._open + frac * self._span, q),
+        }
+
+
+def _grip_adapter(limit, monkeypatch):
+    import cap_harness.g1_real.adapter as adapter_module
+
+    monkeypatch.setattr(adapter_module, "GRIP_SETTLE_S", 0.03)
+    cfg = load_g1_station_config("g1-222")
+    hand = cfg.hands["right"]
+    body = _BlockedRightHand(hand.open, hand.closed, limit, tau_s=0.01, initial_q17=_home_q17(cfg))
+    env = G1Env(cfg, body, camera=SyntheticCamera())
+    env.engage()
+    return G1RealAdapter(env, allow_physical_motion=True), hand
+
+
+def test_close_gripper_stops_at_contact_and_squeezes_lightly(monkeypatch):
+    adapter, hand = _grip_adapter(0.4, monkeypatch)
+    try:
+        result = adapter.close_gripper(arm="right")
+        assert result.ok and result.diagnostics["contact"] is True
+        # stopped near where the fingers met the object, plus the light squeeze
+        assert 0.4 < result.diagnostics["closure"] <= 0.4 + 0.08 + 0.05 + 1e-9
+        _, _, right_hand = adapter.native_env.last_command()
+        assert codec.hand_scalar(right_hand, hand.open, hand.closed) == pytest.approx(
+            result.diagnostics["gripper_position"]
+        )
+        assert result.diagnostics["gripper_position"] > 0.4  # not driven to full close
+    finally:
+        adapter.close()
+
+
+def test_close_gripper_on_nothing_closes_fully(monkeypatch):
+    adapter, _hand = _grip_adapter(1.0, monkeypatch)
+    try:
+        result = adapter.close_gripper(arm="right")
+        assert result.ok and result.diagnostics["contact"] is False
+        assert result.diagnostics["completion"] == "closed_empty"
+        assert result.diagnostics["closure"] == pytest.approx(1.0)
+    finally:
+        adapter.close()
