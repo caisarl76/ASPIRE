@@ -15,6 +15,27 @@ from viser.extras import ViserUrdf
 
 from .session import LiveAgentSession, SessionBusyError
 
+# Depth view: near red, far blue over the manipulation range; no return black.
+_DEPTH_NEAR_M, _DEPTH_FAR_M = 0.3, 1.5
+_DEPTH_COLORS = np.array(
+    [[122, 4, 3], [200, 40, 4], [251, 128, 34], [237, 208, 58], [164, 252, 60],
+     [50, 241, 151], [40, 188, 235], [70, 107, 227], [48, 18, 59]],
+    dtype=np.float64,
+)  # fmt: skip
+
+
+def colorize_depth(depth_m: np.ndarray) -> np.ndarray:
+    """An RGB view of a metric depth image; pixels with no return are black."""
+    t = np.clip((depth_m - _DEPTH_NEAR_M) / (_DEPTH_FAR_M - _DEPTH_NEAR_M), 0.0, 1.0)
+    position = t * (len(_DEPTH_COLORS) - 1)
+    low = np.floor(position).astype(int)
+    high = np.minimum(low + 1, len(_DEPTH_COLORS) - 1)
+    frac = (position - low)[..., None]
+    rgb = (1.0 - frac) * _DEPTH_COLORS[low] + frac * _DEPTH_COLORS[high]
+    rgb[~(depth_m > 0.0)] = 0.0
+    return rgb.astype(np.uint8)
+
+
 logger = logging.getLogger(__name__)
 
 YAM_STATION_URDF = Path(__file__).resolve().parents[1] / "yam_real/description/station/station.urdf"
@@ -41,6 +62,8 @@ class System2Visualizer:
         self._lock = threading.RLock()
         self._images: dict[str, Any] = {}
         self._image_sequences: dict[str, Any] = {}
+        self._depth_images: dict[str, Any] = {}
+        self._depth_sequences: dict[str, Any] = {}
         self._home_job_id: str | None = None
         self._notice = ""
         self.server = viser.ViserServer(host=host, port=port, label="ASPIRE System 2")
@@ -194,6 +217,24 @@ class System2Visualizer:
                         image.thumbnail((640, 480))
                         handle.image = np.asarray(image)
                     self._image_sequences[name] = sequence
+            depth = snapshot.get("depth", {})
+            for name in self._depth_images.keys() - depth.keys():
+                self._depth_images.pop(name).remove()
+                self._depth_sequences.pop(name, None)
+            for name, depth_m in depth.items():
+                if name not in self._depth_images:
+                    self._depth_images[name] = self.server.gui.add_image(
+                        np.zeros((1, 1, 3), dtype=np.uint8),
+                        label=f"{name} depth ({_DEPTH_NEAR_M:g}-{_DEPTH_FAR_M:g} m, black: none)",
+                        format="jpeg",
+                        jpeg_quality=80,
+                    )
+                sequence = metadata.get(name, {}).get("sequence", snapshot.get("observation_seq"))
+                if sequence != self._depth_sequences.get(name):
+                    image = Image.fromarray(colorize_depth(depth_m))
+                    image.thumbnail((640, 480))
+                    self._depth_images[name].image = np.asarray(image)
+                    self._depth_sequences[name] = sequence
             status = "Live camera views." if cameras else "Waiting for camera frames."
             if self._robot is not None and not robot_live:
                 status += " Robot model hidden: waiting for fresh joint state."

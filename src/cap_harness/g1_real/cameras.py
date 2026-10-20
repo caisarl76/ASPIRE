@@ -50,14 +50,89 @@ def _decode_rgb(value: Any) -> np.ndarray:
     return np.asarray(value, np.uint8)
 
 
+_FLOOR_MARGIN_M = 0.03  # pixels this close above the floor plane (or below it) go
+_FLOOR_FIT_TOL_M = 0.02
+_FLOOR_FIT_SAMPLES = 4000
+_FLOOR_FIT_ITERS = 60
+_FLOOR_MIN_UP = 0.9  # plane normal's vertical component: level planes only
+_FLOOR_MIN_INLIERS = 0.3
+
+
+def drop_floor(
+    depth_m: np.ndarray,
+    intrinsics: np.ndarray,
+    base_from_camera: np.ndarray,
+    below_z_m: float,
+) -> np.ndarray:
+    """``depth_m`` with the floor set to 0 (no return).
+
+    The floor is the dominant level plane (RANSAC, then least squares) among
+    points lower than ``below_z_m`` in the base frame. Fitted per frame because
+    the robot's stance tilts it in the torso frame. With no such plane in view
+    (a table filling the image, the floor hidden) nothing is dropped.
+    """
+    valid = depth_m > 0.0
+    h, w = depth_m.shape
+    v, u = np.mgrid[0:h, 0:w]
+    camera = np.stack(
+        [
+            (u - intrinsics[0, 2]) * depth_m / intrinsics[0, 0],
+            (v - intrinsics[1, 2]) * depth_m / intrinsics[1, 1],
+            depth_m,
+        ],
+        axis=-1,
+    )
+    base = camera @ base_from_camera[:3, :3].T + base_from_camera[:3, 3]
+    low = base[valid & (base[..., 2] < below_z_m)]
+    if len(low) < 500:
+        return depth_m
+    rng = np.random.default_rng(0)  # deterministic per frame
+    sample = low[rng.choice(len(low), min(len(low), _FLOOR_FIT_SAMPLES), replace=False)]
+    best, best_count = None, 0
+    for _ in range(_FLOOR_FIT_ITERS):
+        a, b, c = sample[rng.choice(len(sample), 3, replace=False)]
+        normal = np.cross(b - a, c - a)
+        norm = float(np.linalg.norm(normal))
+        if norm < 1e-9:
+            continue
+        normal = normal / norm * (1.0 if normal[2] >= 0.0 else -1.0)
+        if normal[2] < _FLOOR_MIN_UP:
+            continue
+        count = int(np.sum(np.abs((sample - a) @ normal) < _FLOOR_FIT_TOL_M))
+        if count > best_count:
+            best, best_count = (normal, a), count
+    if best is None or best_count < _FLOOR_MIN_INLIERS * len(sample):
+        return depth_m
+    normal, point = best
+    inliers = sample[np.abs((sample - point) @ normal) < _FLOOR_FIT_TOL_M]
+    design = np.c_[inliers[:, 0], inliers[:, 1], np.ones(len(inliers))]
+    slope_x, slope_y, offset = np.linalg.lstsq(design, inliers[:, 2], rcond=None)[0]
+    height = base[..., 2] - (slope_x * base[..., 0] + slope_y * base[..., 1] + offset)
+    return np.where(valid & (height < _FLOOR_MARGIN_M), 0.0, depth_m)
+
+
 class ComposedCameraRgbd:
     """Keeps the latest server message; ``read()`` turns it into a ``CameraFrame``."""
 
     def __init__(
-        self, host: str, port: int, *, role: str = "ego_view", depth_scale_m: float = 0.001
+        self,
+        host: str,
+        port: int,
+        *,
+        role: str = "ego_view",
+        depth_scale_m: float = 0.001,
+        base_from_camera: np.ndarray | None = None,
+        floor_below_z_m: float | None = None,
     ):
         self._role = role
         self._depth_scale_m = depth_scale_m
+        # ponytail: the floor is refit on every frame (~30 ms); reuse a plane
+        # across frames if the camera thread ever falls behind the stream.
+        self._floor = (
+            None
+            if base_from_camera is None or floor_below_z_m is None
+            else (np.asarray(base_from_camera, dtype=np.float64), float(floor_below_z_m))
+        )
         self.depth_missing = False
         self.intrinsics_missing = False
         self._logged: set[str] = set()  # one log line per condition, not per frame
@@ -134,6 +209,8 @@ class ComposedCameraRgbd:
         else:
             scale = intr.get("depth_scale", self._depth_scale_m)
             depth_m = drop_depth_edges(np.asarray(depth).astype(np.float64) * scale)
+            if self._floor is not None:
+                depth_m = drop_floor(depth_m, k, *self._floor)
         if depth_m is None:
             depth_m = np.zeros((h, w), dtype=np.float64)
         frame = CameraFrame(rgb=rgb, depth_m=depth_m, intrinsics=k, timestamp_s=received_s)

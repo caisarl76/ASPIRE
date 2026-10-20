@@ -28,6 +28,8 @@ def build_real_station(
             cfg.camera.port,
             role=cfg.camera.role,
             depth_scale_m=cfg.camera.depth_scale_m,
+            base_from_camera=cfg.camera.base_from_camera,
+            floor_below_z_m=cfg.camera.floor_below_z_m,
         )
         if enable_camera
         # The Observation contract needs a camera, so "no camera" is synthetic

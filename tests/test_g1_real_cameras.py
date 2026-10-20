@@ -168,3 +168,45 @@ def test_slanted_surface_is_not_an_edge():
     # a plane receding 3 mm per pixel (a table seen at 45 deg) has no jump
     depth = 0.6 + 0.003 * np.arange(60)[:, None] * np.ones((60, 60))
     assert np.all(drop_depth_edges(depth) == depth)
+
+
+def _render_depth(base_from_camera, k, floor_z, tilt_x, h=48, w=64):
+    """Depth of a torso-frame scene: a tilted floor and a level case top at z=0."""
+    from cap_harness.g1_real.cameras import drop_floor  # noqa: F401  (import check)
+
+    v, u = np.mgrid[0:h, 0:w]
+    rays = np.stack([(u - k[0, 2]) / k[0, 0], (v - k[1, 2]) / k[1, 1], np.ones((h, w))], -1)
+    r = rays @ base_from_camera[:3, :3].T
+    o = base_from_camera[:3, 3]
+    # floor: z = floor_z + tilt_x * x
+    t_floor = (floor_z + tilt_x * o[0] - o[2]) / (r[..., 2] - tilt_x * r[..., 0])
+    t_case = (0.0 - o[2]) / r[..., 2]
+    hit = o + t_case[..., None] * r
+    on_case = (t_case > 0) & (np.abs(hit[..., 0] - 0.45) < 0.15) & (np.abs(hit[..., 1]) < 0.12)
+    depth = np.where(on_case, t_case, np.where(t_floor > 0, t_floor, 0.0))
+    return depth, on_case
+
+
+def test_floor_is_dropped_and_the_case_top_kept():
+    from cap_harness.g1_real.cameras import drop_floor
+    from cap_harness.g1_real.config import load_g1_station_config
+
+    cfg = load_g1_station_config("g1-lab")
+    k = np.array([[60.0, 0, 32], [0, 60.0, 24], [0, 0, 1]])
+    T = np.asarray(cfg.camera.base_from_camera)
+    depth, on_case = _render_depth(T, k, floor_z=-0.84, tilt_x=0.03)  # SONIC's stance tilt
+    out = drop_floor(depth, k, T, below_z_m=-0.5)
+    floor = (depth > 0) & ~on_case
+    assert floor.sum() > 100 and on_case.sum() > 100
+    assert np.all(out[floor] == 0.0)
+    assert np.all(out[on_case] == depth[on_case])
+
+
+def test_no_floor_in_view_drops_nothing():
+    from cap_harness.g1_real.cameras import drop_floor
+    from cap_harness.g1_real.config import load_g1_station_config
+
+    T = np.asarray(load_g1_station_config("g1-lab").camera.base_from_camera)
+    k = np.array([[60.0, 0, 32], [0, 60.0, 24], [0, 0, 1]])
+    depth = np.full((48, 64), 0.5)  # everything near the camera, nothing low
+    assert np.array_equal(drop_floor(depth, k, T, below_z_m=-0.5), depth)

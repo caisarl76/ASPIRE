@@ -37,7 +37,9 @@ class LiveYamAdapter:
             now = time.monotonic()
             wall = time.time()
             env = self._adapter.native_env
-            cameras, metadata = {}, {}
+            cameras, metadata, depth = {}, {}, {}
+            # Viewer only (not sent to the agent): the main camera's depth.
+            primary = getattr(getattr(env.config, "camera", None), "role", None)
             identity = []
             timestamps = []
             for name in env.camera_aliases:
@@ -49,6 +51,8 @@ class LiveYamAdapter:
                 timestamp = float(frame.timestamp_s)
                 age_ms = max(0, now - timestamp) * 1000
                 cameras[name] = np.asarray(frame.rgb, dtype=np.uint8).copy()
+                if name == primary and getattr(frame, "depth_m", None) is not None:
+                    depth[name] = np.asarray(frame.depth_m, dtype=np.float32).copy()
                 identity.append((name, timestamp))
                 timestamps.append(timestamp)
                 metadata[name] = {
@@ -69,6 +73,7 @@ class LiveYamAdapter:
                 "observation_seq": self._sequence,
                 "cameras": cameras,
                 "camera_metadata": metadata,
+                "depth": depth,
                 "state": {
                     **{f"{arm}_joint_pos": value for arm, value in state.joint_positions.items()},
                     **{

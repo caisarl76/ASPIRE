@@ -29,6 +29,13 @@ the shared `kube` account holds no token; the container runs offline with
 live frame: "water bottle" 0.96 and "black box" 0.91, and the floor back-projects
 level at 0.84 m below the torso origin, so the model's camera transform holds.
 
+Depth cleanup in the workstation's camera client (2026-10-20): pixels on depth jumps
+(RealSense flying pixels) are dropped, and with `camera.floor_below_z_m` set the floor
+is fitted as a plane in every frame and dropped too, so localization and planning
+never see it. The System 2 viewer shows the main camera's depth next to its RGB view
+(near red, far blue over 0.3 to 1.5 m, black where there is no depth or it was
+dropped). The depth view is for the operator; the agent still receives RGB only.
+
 Only one process can bind 5556 on the workstation. **Stop the PICO manager / XR
 bridge on `.62` before starting ASPIRE.** If SAM3/cuRobo run on another GPU host,
 point `sam3_url` / `curobo_url` there (profile fields, or `--sam3-url` /

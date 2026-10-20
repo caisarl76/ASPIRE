@@ -81,6 +81,9 @@ class G1CameraConfig:
     depth_scale_m: float
     max_acquisition_elapsed_s: float
     base_from_camera: np.ndarray
+    # Torso-frame height below which the dominant level plane is the floor and is
+    # dropped from depth; None keeps the floor.
+    floor_below_z_m: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,6 +258,11 @@ def load_g1_station_config(
             raw_camera["max_acquisition_elapsed_s"], "camera.max_acquisition_elapsed_s"
         ),
         base_from_camera=_homogeneous(raw_camera["base_from_camera"], "camera.base_from_camera"),
+        floor_below_z_m=(
+            None
+            if raw_camera.get("floor_below_z_m") is None
+            else float(raw_camera["floor_below_z_m"])
+        ),
     )
 
     raw_workspace = data["planning_workspace"]

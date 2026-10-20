@@ -230,6 +230,7 @@ class LiveAgentSession:
         self._seq = 0
         self._closed = False
         self._cameras: dict[str, np.ndarray] = {}
+        self._depth: dict[str, np.ndarray] = {}  # viewer only; MCP images come from _cameras
         self._robot_state: dict[str, np.ndarray] = {}
         self._observation_timestamp_s: float | None = None
         self._observation_seq: int | None = None
@@ -657,6 +658,7 @@ class LiveAgentSession:
                 "monitor_error": self._monitor_error,
                 "camera_metadata": camera_metadata,
                 "cameras": {key: value.copy() for key, value in self._cameras.items()},
+                "depth": {key: value.copy() for key, value in self._depth.items()},
                 "state": {key: value.copy() for key, value in self._robot_state.items()},
             }
 
@@ -716,8 +718,19 @@ class LiveAgentSession:
             if isinstance(camera_metadata, Mapping)
             else {}
         )
+        depth = value.get("depth")
+        copied_depth = (
+            {
+                str(name): np.asarray(frame, dtype=np.float32).copy()
+                for name, frame in depth.items()
+                if isinstance(frame, np.ndarray)
+            }
+            if isinstance(depth, Mapping)
+            else {}
+        )
         with self._lock:
             self._cameras.update(copied_cameras)
+            self._depth = copied_depth
             self._camera_metadata = copied_metadata
             if isinstance(state, Mapping) and state:
                 next_state = {

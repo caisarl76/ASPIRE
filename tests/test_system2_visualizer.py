@@ -219,3 +219,26 @@ def test_robot_model_hides_when_telemetry_is_unavailable(viewer, unavailable):
         visualizer._refresh()
         assert not visualizer._robot_root.visible
         assert "Robot model hidden" in visualizer._status.content
+
+
+def test_depth_view_is_shown_colorized_next_to_the_camera(viewer):
+    from cap_harness.agent.visualizer import colorize_depth
+
+    visualizer, _session, snapshot = viewer
+    depth = np.full((30, 40), 0.3, dtype=np.float32)  # near
+    depth[:, 20:] = 1.5  # far
+    depth[0, 0] = 0.0  # no return
+    with visualizer._lock:
+        snapshot["cameras"] = {"ego_view": np.zeros((30, 40, 3), dtype=np.uint8)}
+        snapshot["camera_metadata"] = {"ego_view": {"sequence": 1}}
+        snapshot["depth"] = {"ego_view": depth}
+        visualizer._refresh()
+        assert list(visualizer._depth_images) == ["ego_view"]
+        assert "depth" in visualizer._depth_images["ego_view"].label
+        snapshot["depth"] = {}
+        visualizer._refresh()
+        assert not visualizer._depth_images
+    rgb = colorize_depth(depth)
+    assert tuple(rgb[0, 0]) == (0, 0, 0)
+    assert rgb[5, 5, 0] > rgb[5, 5, 2]  # near is red
+    assert rgb[5, 30, 2] > rgb[5, 30, 0]  # far is blue
