@@ -46,6 +46,16 @@ in `~/aspire-backup-20261020` on .222. Another stack's `g1_head_camera_server.py
 stop it before starting ASPIRE's camera server (section 2). The deploy there
 publishes `init_base_quat`, which the heading fix uses.
 
+**Choosing the robot.** Both launchers take `--robot 222` (main robot, Dex3) or
+`--robot 223` (rubber hands). The server maps it to `--benchmark g1_real --station
+g1-222` or `g1-lab`; the agent launcher tells the agent which hands it has and which
+recipe applies, and on 223 does not pre-approve the gripper and hand tools:
+
+```bash
+scripts/start_system2.sh --robot 222 --allow-motion --viser-port 8081 --sam3-url http://192.168.75.174:8114
+scripts/start_system2_agent.sh --robot 222 --allow-motion
+```
+
 Only one process can bind 5556 on the workstation. **Stop the PICO manager / XR
 bridge on `.62` before starting ASPIRE.** If SAM3/cuRobo run on another GPU host,
 point `sam3_url` / `curobo_url` there (profile fields, or `--sam3-url` /
