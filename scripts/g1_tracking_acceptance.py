@@ -115,6 +115,7 @@ def run_segments(env, segment_m: float, partial: dict) -> dict:
                 "ok": ok,
                 "correction_rounds": info.get("correction_rounds", 0),
                 "correction_offset_m": info.get("correction_offset_m"),
+                "correction_errors_m": info.get("correction_errors_m"),
                 "joint_residual_rad": info.get("joint_residual_rad"),
                 "error": None
                 if result.error is None
@@ -126,6 +127,11 @@ def run_segments(env, segment_m: float, partial: dict) -> dict:
         print(
             f"  segment {i}: ok={result.ok} pos {pos * 1000:.1f} mm rot {np.degrees(rot):.2f} deg"
             f" rounds={info.get('correction_rounds', 0)} t={duration:.1f}s"
+            + (
+                " errs_mm=" + "/".join(f"{e * 1000:.0f}" for e in info["correction_errors_m"] if e)
+                if info.get("correction_errors_m")
+                else ""
+            )
             + ("" if result.error is None else f" [{result.error.code}]")
         )
     worst_pos = max(r["position_error_m"] for r in rows)

@@ -50,3 +50,4 @@ def test_profile_declares_sonic_tracking_knobs():
     assert controller.pose_correction_rounds == 3
     assert controller.plan_max_joint_velocity_rad_s == pytest.approx(0.5)
     assert controller.trajectory_start_interp_s == 0.0  # the stream starts at the chain itself
+    assert controller.settle_until_still_max_s == pytest.approx(3.0)

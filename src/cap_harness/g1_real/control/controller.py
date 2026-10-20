@@ -30,6 +30,10 @@ _Q17 = slice(0, UPPER_BODY_DOF)
 _LEFT_HAND = slice(UPPER_BODY_DOF, UPPER_BODY_DOF + HAND_DOF)
 _RIGHT_HAND = slice(UPPER_BODY_DOF + HAND_DOF, UPPER_BODY_DOF + 2 * HAND_DOF)
 _ARMS = slice(3, UPPER_BODY_DOF)  # SONIC-17 minus the three waist joints
+# Settle-until-still: two consecutive 0.25 s windows whose means differ by less
+# than 0.01 rad on every arm joint (about 3-4 mm at the hand).
+_STILL_WINDOW_S = 0.25
+_STILL_RAD = 0.01
 
 
 def _rows(
@@ -169,11 +173,33 @@ def execute_upper_body_trajectory(
             return refused
         catch_up_ticks += 1
 
-    for _ in range(max(0, round(max(0.0, float(settle_s)) / dt))):
+    settle_ticks = max(0, round(max(0.0, float(settle_s)) / dt))
+    extra_s = float(env.config.controller.settle_until_still_max_s) if settle_ticks else 0.0
+    max_ticks = settle_ticks + round(extra_s / dt)
+    window = max(1, round(_STILL_WINDOW_S / dt))
+    arms: list[np.ndarray] = []
+    settled = extra_s <= 0.0
+    ticks_done = 0
+    while ticks_done < max_ticks:
         _raise_if_stopped("during settle", dt)
         time.sleep(dt)
         if (refused := tick(emitted())) is not None:
             return refused
+        ticks_done += 1
+        if extra_s <= 0.0:
+            continue
+        obs = env.body.get_observations()
+        if obs is not None:
+            arms.append(np.concatenate([obs["left_joint_pos"], obs["right_joint_pos"]]))
+        # Still: the mean of the last window moved less than _STILL_RAD from the
+        # window before it on every joint. Window means, not raw samples, so
+        # sensor noise does not read as motion.
+        if ticks_done >= settle_ticks and len(arms) >= 2 * window:
+            before = np.mean(arms[-2 * window : -window], axis=0)
+            after = np.mean(arms[-window:], axis=0)
+            if float(np.max(np.abs(after - before))) < _STILL_RAD:
+                settled = True
+                break
 
     return {
         "success": True,
@@ -185,6 +211,8 @@ def execute_upper_body_trajectory(
         "catch_up_ticks": int(catch_up_ticks),
         "start_interp_s": interp_s,
         "settle_s": float(settle_s),
+        "settle_ticks": int(ticks_done),
+        "settled": bool(settled),
         "playback_speed": speed,
     }
 

@@ -514,3 +514,39 @@ def test_stream_eases_in_and_out(env):
     mid = steps[len(steps) // 2]
     assert steps[0] < 0.25 * mid and steps[-1] < 0.25 * mid  # zero-velocity ends
     assert mid <= 0.03  # still under the per-tick clamp
+
+
+def _slow_env(still_max_s: float):
+    from dataclasses import replace as dc_replace
+
+    cfg = load_g1_station_config("g1-lab")
+    cfg = dc_replace(
+        cfg, controller=dc_replace(cfg.controller, settle_until_still_max_s=still_max_s)
+    )
+    home = codec.upper_body_from_arms(
+        cfg.waist_targets, cfg.arms["left"].home_joints, cfg.arms["right"].home_joints
+    )
+    e = G1Env(cfg, FakeBodyClient(tau_s=0.4, initial_q17=home), camera=SyntheticCamera())
+    e.engage()
+    return e
+
+
+def test_settle_extends_until_a_slow_arm_stops():
+    e = _slow_env(3.0)
+    try:
+        result = e.execute_action_batch(_right_batch(e, 0.0, 0.3, 0.2), settle_s=0.2)
+        assert result["settled"] is True
+        assert result["settle_ticks"] > round(0.2 * 50)  # went past the fixed settle
+        _, _, commanded = codec.arms_from_upper_body(e.last_command()[0])
+        assert abs(e.get_observations("right")["joint_pos"][0] - commanded[0]) < 0.03
+    finally:
+        e.close()
+
+
+def test_settle_is_fixed_when_the_knob_is_zero():
+    e = _slow_env(0.0)
+    try:
+        result = e.execute_action_batch(_right_batch(e, 0.0, 0.3, 0.2), settle_s=0.2)
+        assert result["settle_ticks"] == round(0.2 * 50)
+    finally:
+        e.close()

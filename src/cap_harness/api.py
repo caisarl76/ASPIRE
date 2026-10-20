@@ -1341,16 +1341,21 @@ class CapApi:
             target_pose, tolerance, max_steps, arm, strategy, correcting=rounds > 0
         )
         commanded = target_pose
+        errors_m: list[float] = []
         for round_index in range(1, rounds + 1):
             error_m = _pose_tolerance_miss(result)
             if error_m is None:  # success, or a failure correction cannot fix
                 break
+            errors_m.append(error_m)
             measured = self._execution_state(result).end_effector_poses[arm]
             commanded = _corrected_pose(commanded, target_pose, measured)
             result = self._execute_pose(
                 commanded, tolerance, max_steps, arm, strategy, goal=target_pose, correcting=True
             )
-            result = _with_correction_diagnostics(result, round_index, commanded, target_pose)
+            final_m = _pose_error_m(result)
+            result = _with_correction_diagnostics(
+                result, round_index, commanded, target_pose, [*errors_m, final_m]
+            )
             new_error_m = _pose_tolerance_miss(result)
             if new_error_m is not None and new_error_m > _POSE_CORRECTION_STALL_RATIO * error_m:
                 break
@@ -2182,12 +2187,27 @@ def _corrected_pose(commanded: Pose, target: Pose, measured: Pose) -> Pose:
     )
 
 
+def _pose_error_m(result: ExecutionResult) -> float | None:
+    """The validated position error of a result, success or tolerance miss."""
+    if result.ok:
+        value = result.diagnostics.get("position_error_m")
+    else:
+        value = None if result.error is None else result.error.details.get("position_error_m")
+    return None if value is None else float(value)
+
+
 def _with_correction_diagnostics(
-    result: ExecutionResult, rounds: int, commanded: Pose, target: Pose
+    result: ExecutionResult,
+    rounds: int,
+    commanded: Pose,
+    target: Pose,
+    errors_m: list[float | None],
 ) -> ExecutionResult:
     extra = {
         "correction_rounds": rounds,
         "correction_offset_m": (commanded.position - target.position).tolist(),
+        # position error before the first round, then after each round
+        "correction_errors_m": errors_m,
     }
     error = result.error
     if error is not None:

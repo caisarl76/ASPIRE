@@ -1238,6 +1238,7 @@ def test_move_to_pose_corrects_a_proportional_tracking_bias() -> None:
     np.testing.assert_allclose(ik.targets[-1].position, [0.15, 0.0, 0.0], atol=1e-9)
     assert result.diagnostics["position_error_m"] == pytest.approx(0.01)
     assert result.diagnostics["correction_offset_m"] == pytest.approx([0.05, 0.0, 0.0])
+    assert result.diagnostics["correction_errors_m"] == pytest.approx([0.04, 0.016, 0.01])
 
 
 def test_move_to_pose_correction_stops_on_a_stall_and_reports_rounds() -> None:

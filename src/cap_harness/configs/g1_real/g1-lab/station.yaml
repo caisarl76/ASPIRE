@@ -65,6 +65,12 @@ controller:
   # The stream starts every batch at the chain target with a fading offset and
   # eases in and out (controller.py), so no extra blend is needed here.
   trajectory_start_interp_s: 0.0
+  # The real arm keeps converging for 1-3 s after the stream ends. A batch's
+  # settle (1 s for trajectories) is extended until the arms are still, up to
+  # this long, so the residual and pose checks (and correction rounds) see where
+  # the arm stops rather than a transient; measuring early made corrections
+  # overshoot by 20-35 mm on the robot (2026-10-20). 0 keeps the fixed settle.
+  settle_until_still_max_s: 3.0
 
 camera:
   role: ego_view
