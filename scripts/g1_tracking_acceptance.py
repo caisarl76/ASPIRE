@@ -4,7 +4,7 @@ WARNING: this MOVES THE ROBOT. Run it only after the runbook preflight
 (docs/g1-real.md), with the operator ready: keyboard ``O`` on PC2 is the e-stop.
 
 Phases: ``hold`` (5 s against the commanded pose, joint error <= 0.05 rad), ``segments``
-(ten 0.15 m torso-X moves on the primary arm, <= 1.5 cm and <= 5 deg), ``loaded``
+(ten 0.15 m vertical moves, up and back, on the primary arm, <= 1.5 cm and <= 5 deg), ``loaded``
 (``hold`` with a 300 g object in the primary hand). ``--fake`` runs the plumbing
 against the fake body. Exit 0 PASS, 1 FAIL, 2 setup error.
 """
@@ -73,21 +73,25 @@ def run_segments(env, segment_m: float, partial: dict) -> dict:
     # so segments use its default timing; the actual speed is the logged duration_s.
     strategy = MotionStrategy(ik_solver="mink", trajectory_planner="interpolation")
     rows = partial.setdefault("segments", [])
-    # Two fixed targets from the starting pose, retract first (forward is out of
-    # reach from home). Chaining from each measured pose instead let every miss
-    # accumulate until a target left the workspace (ik_unreachable on a real run).
+    # Two fixed targets: up by segment_m, then back to the start. Vertical, away
+    # from the body: the earlier torso-X retract put the hand beside the thigh,
+    # and on the robot the hand hit the leg, which pushed it ~25 mm sideways.
+    # Fixed targets (not chained from each measured pose) keep a miss from
+    # accumulating until a target leaves the workspace.
     first = env.get_observations(side)
     quat_wxyz = np.roll(first["ee_quat"], 1)
     targets = [
-        Pose(first["ee_pos"] - np.array([segment_m, 0.0, 0.0]), quat_wxyz, "torso"),
+        Pose(first["ee_pos"] + np.array([0.0, 0.0, segment_m]), quat_wxyz, "torso"),
         Pose(first["ee_pos"].copy(), quat_wxyz, "torso"),
     ]
     for i in range(SEGMENTS):
         start = env.get_observations(side)["ee_pos"]
         target = targets[i % 2]
-        sign = -1.0 if i % 2 == 0 else 1.0
+        sign = 1.0 if i % 2 == 0 else -1.0
         t0 = time.monotonic()
-        result = api.move_to_pose(target, arm=side, strategy=strategy)
+        # At the profile's planning speed a 15 cm vertical move is ~150 waypoints,
+        # past move_to_pose's default budget of 120.
+        result = api.move_to_pose(target, arm=side, strategy=strategy, max_steps=600)
         duration = time.monotonic() - t0
         if result.error is not None and result.error.code == ErrorCode.IK_UNREACHABLE:
             raise RuntimeError(f"segment {i}: {result.error}")
@@ -105,7 +109,7 @@ def run_segments(env, segment_m: float, partial: dict) -> dict:
         rows.append(
             {
                 "segment": i,
-                "dx_m": sign * segment_m,
+                "dz_m": sign * segment_m,
                 "start_m": np.asarray(start).tolist(),
                 "target_m": target.position.tolist(),
                 "execution_ok": bool(result.ok),
@@ -156,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
         "--segment-m",
         type=float,
         default=0.15,
-        help="segment length (0.3 is unreachable from home)",
+        help="vertical segment length (up from the start pose, then back)",
     )
     ap.add_argument("--fake", action="store_true", help="use the fake body (no robot)")
     args = ap.parse_args(argv)

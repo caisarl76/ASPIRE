@@ -309,9 +309,13 @@ Pending operator run. `scripts/g1_tracking_acceptance.py` (Task 15) automates it
 
 | Test | Pass criterion | Result |
 | --- | --- | --- |
-| Hold the upper-body target 5 s | max per-joint error <= 0.05 rad, both arms | ______ |
-| Ten 0.15 m straight-line segments (default `--segment-m 0.15`; 0.3 m is unreachable along torso X from home on the G1, and even 0.15 m only works retracting first, so segments alternate -X then +X); speed is logged per segment, not enforced, because the interpolation planner ignores `time_dilation_factor` | final EE error <= 1.5 cm and <= 5 deg; no 0.10 rad residual failure | ______ |
+| Hold the upper-body target 5 s | max per-joint error <= 0.05 rad, both arms | FAIL 2026-10-19: max 0.11 rad (shoulder yaw, wrist roll), steady after ~2.5 s |
+| Ten 0.15 m vertical segments, up from the start pose then back (default `--segment-m 0.15`; the earlier torso-X retract put the hand beside the thigh and it hit the leg); speed is logged per segment, not enforced, because the interpolation planner ignores `time_dilation_factor` | final EE error <= 1.5 cm and <= 5 deg; no 0.10 rad residual failure | FAIL 2026-10-20 (torso-X version, hand touching the leg): worst 37.9 mm, 3 of 10 within 1.5 cm after 1-2 correction rounds |
 | Hold a 300 g object | repeat the 5 s hold, error <= 0.05 rad | ______ |
+
+**Operator decision 2026-10-20:** an end-effector error of about 4 cm is accepted
+for now. It comes from SONIC's arm tracking, not from ASPIRE, and the session goal
+is the ASPIRE-SONIC integration; tracking (kp/kd on PC2) is revisited later.
 
 `move_to_pose` already runs up to `controller.pose_correction_rounds` corrective
 rounds (section 6, sim2sim); the segment test reports the rounds each segment
