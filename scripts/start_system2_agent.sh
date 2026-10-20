@@ -3,7 +3,21 @@
 set -euo pipefail
 ASPIRE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$ASPIRE_ROOT/.uv-cache}"
-ASPIRE_PORT="${ASPIRE_MCP_PORT:-8222}"
+# Leading options: --robot 222|223|sim (which G1, see start_system2.sh) and --allow-motion.
+ASPIRE_ROBOT=""
+ASPIRE_MOTION=0
+while (($#)); do
+  case "$1" in
+    --robot)
+      [[ "${2:-}" == 222 || "${2:-}" == 223 || "${2:-}" == sim ]] \
+        || { printf -- '--robot must be 222 (Dex3 hands), 223 (rubber hands) or sim\n' >&2; exit 2; }
+      ASPIRE_ROBOT="$2"; shift 2 ;;
+    --allow-motion) ASPIRE_MOTION=1; shift ;;
+    *) break ;;
+  esac
+done
+# The sim server listens on 8223 (start_system2.sh --robot sim).
+ASPIRE_PORT="${ASPIRE_MCP_PORT:-$([[ "$ASPIRE_ROBOT" == sim ]] && echo 8223 || echo 8222)}"
 [[ "$ASPIRE_PORT" =~ ^[0-9]+$ ]] || { printf 'ASPIRE_MCP_PORT must be numeric.\n' >&2; exit 1; }
 "$ASPIRE_ROOT/.venv-system2/bin/python" - "$ASPIRE_PORT" <<'PY'
 import json, sys, urllib.request
@@ -14,23 +28,11 @@ with opener.open(f'http://127.0.0.1:{sys.argv[1]}/health', timeout=5) as respons
 PY
 ASPIRE_GUIDE="$(cat "$ASPIRE_ROOT/docs/system2-agent-guide.md")"
 ASPIRE_PERMISSIONS=()
-# Leading options: --robot 222|223 (which G1, see start_system2.sh) and --allow-motion.
-ASPIRE_ROBOT=""
-ASPIRE_MOTION=0
-while (($#)); do
-  case "$1" in
-    --robot)
-      [[ "${2:-}" == 222 || "${2:-}" == 223 ]] \
-        || { printf -- '--robot must be 222 (Dex3 hands) or 223 (rubber hands)\n' >&2; exit 2; }
-      ASPIRE_ROBOT="$2"; shift 2 ;;
-    --allow-motion) ASPIRE_MOTION=1; shift ;;
-    *) break ;;
-  esac
-done
 ASPIRE_HAND_TOOLS=(cap_set_gripper cap_open_gripper cap_close_gripper cap_g1_real__set_hand_joints)
 ASPIRE_ROBOT_NOTE=""
 case "$ASPIRE_ROBOT" in
   222) ASPIRE_ROBOT_NOTE="Robot: the main G1 (PC2 192.168.0.222, station g1-222) with Dex3 hands. Grip with cap_close_gripper and cap_open_gripper. Task recipes are linked from the cap-tool-usage G1 section: bottle pick and place, and palm touch (which covers Dex3). Confirm that cap_g1_real__get_controller_metadata reports station g1-222 and report a mismatch instead of acting. " ;;
+  sim) ASPIRE_ROBOT_NOTE="Robot: the simulated G1 in MuJoCo (station g1-sim) with Dex3 hands, the real head camera pose, a black case and a water bottle on it. Use the same tools and recipes as the main robot (bottle pick and place, palm touch); the scene is simulated, so say what you see rather than assume. Confirm that cap_g1_real__get_controller_metadata reports station g1-sim and report a mismatch instead of acting. " ;;
   223) ASPIRE_ROBOT_NOTE="Robot: the G1 with motorless rubber hands (PC2 192.168.0.223, station g1-lab). Gripper and hand tools move nothing on this robot; do not use them or treat them as evidence. For touching objects read the palm touch recipe linked from the cap-tool-usage G1 section. Confirm that cap_g1_real__get_controller_metadata reports station g1-lab and report a mismatch instead of acting. "
        ASPIRE_HAND_TOOLS=() ;;
 esac

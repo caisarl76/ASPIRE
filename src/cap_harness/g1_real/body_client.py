@@ -89,6 +89,9 @@ def _observation(
     }
 
 
+_START_AFTER_BIND_S = 1.0
+
+
 class SonicZmqBodyClient:
     """PUB planner commands to SONIC and poll its ``g1_debug`` feedback at 100 Hz."""
 
@@ -110,6 +113,7 @@ class SonicZmqBodyClient:
         self._pub = zmq.Context.instance().socket(zmq.PUB)
         self._pub.setsockopt(zmq.LINGER, 0)
         self._pub.bind(config.command_bind)
+        self._bound_at = time.monotonic()
         self._sub = ZMQStateSubscriber(
             config.feedback_host, config.feedback_port, config.feedback_topic
         )
@@ -223,6 +227,12 @@ class SonicZmqBodyClient:
         )
 
     def send_start(self) -> None:
+        # ZMQ "slow joiner": a PUB drops what it sends before a subscriber has
+        # connected, and `start` is sent once. An engage right at server startup
+        # lost it in the sim; give SONIC's subscriber time to connect first.
+        wait = _START_AFTER_BIND_S - (time.monotonic() - self._bound_at)
+        if wait > 0:
+            time.sleep(wait)
         self._pub.send(build_command_message(start=True, stop=False, planner=True))
 
     def seed_hands(self, left: np.ndarray, right: np.ndarray) -> None:

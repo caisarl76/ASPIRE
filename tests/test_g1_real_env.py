@@ -599,3 +599,25 @@ def test_home_from_a_raised_hand_lifts_and_comes_back_before_descending(env, mon
 def test_home_near_home_goes_straight_there(env):
     result = env.go_home(duration_s=0.3)
     assert result["success"] is True and result["retreat_waypoints"] == 0
+
+
+def test_first_engage_resends_start_when_the_first_one_is_lost(monkeypatch):
+    import cap_harness.g1_real.env as env_module
+
+    monkeypatch.setattr(env_module, "ENGAGE_START_RESEND_S", 0.1)
+    cfg = load_g1_station_config("g1-lab")
+
+    class _LosesFirstStart(_FeedbackAfterStart):
+        def send_start(self):
+            FakeBodyClient.send_start(self)
+            if self.start_count >= 2:  # the first start never arrived
+                self.commands_before_start = len(self.commands)
+                self.started = True
+
+    fake = _LosesFirstStart(tau_s=0.01)
+    e = G1Env(cfg, fake, camera=SyntheticCamera())
+    try:
+        assert e.engage()["already_engaged"] is False
+        assert fake.start_count == 2
+    finally:
+        e.close()

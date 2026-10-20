@@ -264,6 +264,38 @@ only `cap_program_go_home` does. The sim2sim step therefore gates the move on
 (the smoke script requires the same). The smoke script moves whatever server it is
 pointed at: re-run it against the real server only with the operator ready.
 
+### Sim with camera and objects (`scripts/g1_sim.sh`)
+
+One command runs the SONIC MuJoCo sim headless with a black case (0.84 m, top at torso
+height) and a 500 ml bottle on it, publishes the head camera's RGB, depth and
+intrinsics in the PC2 camera format, starts the SONIC deploy, and with `smoke` also a
+sim CAP server and a check list:
+
+```bash
+scripts/g1_sim.sh smoke          # up, engage, drop, checks, down (--keep leaves it running)
+scripts/g1_sim.sh up             # or by hand: sim + deploy only
+scripts/start_system2.sh --robot sim --allow-motion --engage --sam3-url http://192.168.75.174:8114
+scripts/g1_sim.sh drop           # drop the robot onto its feet once SONIC holds it
+scripts/g1_sim.sh reset          # lay the case and bottle out in front of it (after drop)
+scripts/start_system2_agent.sh --robot sim --allow-motion
+scripts/g1_sim.sh down
+```
+
+The sim lives in `scripts/g1_sim/sim_rgbd.py`, which runs the fork's simulator with its
+own Python and leaves the fork unchanged: it swaps the scene at load (case, bottle, and
+`head_camera` moved to the real D435 pose and field of view, so the `g1-sim` profile
+shares the real camera transform), renders on the GPU through EGL, and toggles the
+elastic band on a signal instead of the viewer's `9`. It uses its own ports (camera
+5565, command 5566, feedback 5567, MCP 8223, viewer 8083) and can run next to a
+real-robot server. Each camera message also carries `sim_truth`, the objects' torso-frame
+positions, which `scripts/g1_sim/smoke.py` checks localization against.
+
+Result (2026-10-21): all seven checks pass (camera RGB-D and intrinsics, station, Home,
+right hand 5 cm up at 8 mm, Dex3 close on nothing and open, SAM3 localizes the bottle
+3.6 cm from its true center). Building it surfaced a lost `start` when engage runs
+right at server startup (ZMQ slow joiner); the body client now waits 1 s after binding
+and the first engage resends `start` every 2 s until feedback arrives.
+
 ### Sim2sim (SONIC MuJoCo loop)
 
 Run on the workstation on 2026-10-18 (headless: the MuJoCo viewer on an Xvfb

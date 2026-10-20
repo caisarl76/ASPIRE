@@ -61,3 +61,14 @@ def test_main_robot_profile_points_at_pc2_222():
     # same body, hands, and camera mounting as g1-lab
     np.testing.assert_array_equal(main.camera.base_from_camera, lab.camera.base_from_camera)
     np.testing.assert_array_equal(main.hands["right"].closed, lab.hands["right"].closed)
+
+
+def test_sim_profile_uses_its_own_ports():
+    sim = load_g1_station_config("g1-sim")
+    assert sim.station == "g1-sim" and sim.sonic.feedback_host == "127.0.0.1"
+    # never the real-robot ports, so a sim can run next to a live server
+    assert sim.sonic.command_bind == "tcp://*:5566"
+    assert (sim.sonic.feedback_port, sim.camera.port) == (5567, 5565)
+    np.testing.assert_array_equal(
+        sim.camera.base_from_camera, load_g1_station_config("g1-222").camera.base_from_camera
+    )

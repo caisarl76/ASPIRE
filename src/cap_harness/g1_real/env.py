@@ -45,6 +45,7 @@ HAND_FULL_TRAVEL_S = 1.0
 # (working over a table or a box) first lifts RETREAT_LIFT_M and comes back over its
 # home position at that height, then descends. A straight joint-space Home from
 # there swept the hand down into the box it had just placed a bottle on (2026-10-20).
+ENGAGE_START_RESEND_S = 2.0  # first engage: resend `start` while no feedback arrives
 RETREAT_ABOVE_HOME_M = 0.05
 RETREAT_LIFTS_M = (0.08, 0.04, 0.0)  # tried in order until reachable
 RETREAT_STEP_M = 0.02
@@ -337,13 +338,19 @@ class G1Env:
         """
         dt = 1.0 / float(self.config.controller.command_stream_hz)
         self.body.send_start()
-        deadline = time.monotonic() + float(self.engage_feedback_timeout_s)
+        sent = time.monotonic()
+        deadline = sent + float(self.engage_feedback_timeout_s)
         while self.body.get_observations() is None:
-            if time.monotonic() > deadline:
+            now = time.monotonic()
+            if now > deadline:
                 raise RuntimeError(
                     f"no SONIC feedback within {self.engage_feedback_timeout_s:.1f} s "
                     "of start; not engaging"
                 )
+            if now - sent >= ENGAGE_START_RESEND_S:
+                # still no CONTROL feedback: the start was most likely lost in transit
+                self.body.send_start()
+                sent = now
             time.sleep(dt)
         # Seeding mid-motion would stop the arms where they happen to be; wait
         # for SONIC's own start motion to finish first (bounded: a robot that

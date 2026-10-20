@@ -113,24 +113,36 @@ def test_agent_launcher_withholds_hand_tools_on_the_rubber_hand_robot(tmp_path):
         assert not _approved(argv, tool)
 
 
-@pytest.mark.parametrize(("robot", "station"), [("222", "g1-222"), ("223", "g1-lab")])
-def test_server_launcher_maps_robot_to_station(tmp_path, robot, station):
+@pytest.mark.parametrize(
+    ("robot", "mapped"),
+    [
+        ("222", ["--station", "g1-222"]),
+        ("223", ["--station", "g1-lab"]),
+        # own MCP/viewer ports so the sim can run next to a real-robot server
+        ("sim", ["--station", "g1-sim", "--port", "8223", "--viser-port", "8083"]),
+    ],
+)
+def test_server_launcher_maps_robot_to_station(tmp_path, robot, mapped):
     launched, _ = _launch(
         tmp_path, "start_system2.sh", ["--robot", robot, "--allow-motion", "--engage"]
     )
     argv = json.loads(launched.stdout)
     assert argv[:2] == ["-m", "cap_harness.agent"]
-    assert argv[2:] == [
-        "--benchmark",
-        "g1_real",
-        "--station",
-        station,
-        "--allow-motion",
-        "--engage",
-    ]
+    assert argv[2:] == ["--benchmark", "g1_real", *mapped, "--allow-motion", "--engage"]
+
+
+def test_agent_launcher_points_the_sim_at_its_own_server(tmp_path):
+    launched, _ = _launch(tmp_path, "start_system2_agent.sh", ["--robot", "sim", "--allow-motion"])
+    argv = json.loads(launched.stdout)
+    assert 'mcp_servers.cap.url="http://127.0.0.1:8223/mcp/"' in argv
+    assert "station g1-sim" in argv[-1]
+    assert _approved(argv, "cap_close_gripper")  # Dex3 in sim
 
 
 @pytest.mark.parametrize("script", ["start_system2.sh", "start_system2_agent.sh"])
 def test_unknown_robot_is_refused(tmp_path, script):
     launched, _ = _launch(tmp_path, script, ["--robot", "224"], check=False)
-    assert launched.returncode == 2 and "222 (Dex3 hands) or 223" in launched.stderr
+    assert (
+        launched.returncode == 2
+        and "222 (Dex3 hands), 223 (rubber hands) or sim" in launched.stderr
+    )

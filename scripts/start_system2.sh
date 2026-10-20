@@ -7,7 +7,9 @@ ASPIRE_PYTHON="$ASPIRE_ROOT/.venv-system2/bin/python"
 cd "$ASPIRE_ROOT"
 export OPENBLAS_NUM_THREADS=1
 export NO_PROXY="${NO_PROXY:-},127.0.0.1,localhost"
-# --robot selects a G1: 222 is the main robot (Dex3 hands), 223 the rubber-hand one.
+# --robot selects a G1: 222 is the main robot (Dex3 hands), 223 the rubber-hand one,
+# sim the MuJoCo sim from scripts/g1_sim.sh (own MCP/viewer ports, so it can run next
+# to a real-robot server; later arguments override them).
 ASPIRE_ARGS=()
 while (($#)); do
   case "$1" in
@@ -15,7 +17,8 @@ while (($#)); do
       case "${2:-}" in
         222) ASPIRE_ARGS+=(--benchmark g1_real --station g1-222) ;;
         223) ASPIRE_ARGS+=(--benchmark g1_real --station g1-lab) ;;
-        *) printf -- '--robot must be 222 (Dex3 hands) or 223 (rubber hands)\n' >&2; exit 2 ;;
+        sim) ASPIRE_ARGS+=(--benchmark g1_real --station g1-sim --port 8223 --viser-port 8083) ;;
+        *) printf -- '--robot must be 222 (Dex3 hands), 223 (rubber hands) or sim\n' >&2; exit 2 ;;
       esac
       shift 2 ;;
     *) ASPIRE_ARGS+=("$1"); shift ;;
