@@ -82,6 +82,9 @@ class YamRealAdapter:
     residual checks here unchanged.
     """
 
+    # Home reports a gripper as open at or above this measured scalar.
+    home_gripper_open_min: float = 0.95
+
     def __init__(
         self,
         env: Any,
@@ -853,7 +856,8 @@ class YamRealAdapter:
                 "home_tolerance_rad": HOME_DIAGNOSTIC_TOLERANCE_RAD,
                 "home_verified": max(residuals.values()) <= HOME_DIAGNOSTIC_TOLERANCE_RAD,
                 "grippers_open": {
-                    side: float(observation.robot_state.gripper_positions[side]) >= 0.95
+                    side: float(observation.robot_state.gripper_positions[side])
+                    >= self.home_gripper_open_min
                     for side in self.arms
                 },
                 # `seconds`, not `duration`: the argument is None on the default
@@ -945,6 +949,7 @@ class YamRealAdapter:
             "physical_motion_authorized": self._allow_physical_motion,
             "command_rpc_count": self._command_rpc_count,
             "max_planning_step_rad": self.max_planning_step_rad,
+            "station": self._env.config.station,
         }
 
 

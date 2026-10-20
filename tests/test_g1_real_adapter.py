@@ -346,3 +346,8 @@ def test_close_gripper_on_nothing_closes_fully(monkeypatch):
         assert result.diagnostics["closure"] == pytest.approx(1.0)
     finally:
         adapter.close()
+
+
+def test_metadata_names_the_station_and_home_accepts_a_slightly_open_dex3(adapter):
+    assert adapter.get_controller_metadata()["station"] == "g1-lab"
+    assert adapter.home_gripper_open_min == pytest.approx(0.9)

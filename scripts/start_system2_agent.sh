@@ -30,8 +30,8 @@ done
 ASPIRE_HAND_TOOLS=(cap_set_gripper cap_open_gripper cap_close_gripper cap_g1_real__set_hand_joints)
 ASPIRE_ROBOT_NOTE=""
 case "$ASPIRE_ROBOT" in
-  222) ASPIRE_ROBOT_NOTE="Robot: the main G1 (PC2 192.168.0.222, station g1-222) with Dex3 hands. Grip with cap_close_gripper and cap_open_gripper; for bottle pick and place read the bottle pick recipe linked from the cap-tool-usage G1 section. Confirm the capability graph reports station g1-222 and report a mismatch instead of acting. " ;;
-  223) ASPIRE_ROBOT_NOTE="Robot: the G1 with motorless rubber hands (PC2 192.168.0.223, station g1-lab). Gripper and hand tools move nothing on this robot; do not use them or treat them as evidence. For touching objects read the palm touch recipe linked from the cap-tool-usage G1 section. Confirm the capability graph reports station g1-lab and report a mismatch instead of acting. "
+  222) ASPIRE_ROBOT_NOTE="Robot: the main G1 (PC2 192.168.0.222, station g1-222) with Dex3 hands. Grip with cap_close_gripper and cap_open_gripper. Task recipes are linked from the cap-tool-usage G1 section: bottle pick and place, and palm touch (which covers Dex3). Confirm that cap_g1_real__get_controller_metadata reports station g1-222 and report a mismatch instead of acting. " ;;
+  223) ASPIRE_ROBOT_NOTE="Robot: the G1 with motorless rubber hands (PC2 192.168.0.223, station g1-lab). Gripper and hand tools move nothing on this robot; do not use them or treat them as evidence. For touching objects read the palm touch recipe linked from the cap-tool-usage G1 section. Confirm that cap_g1_real__get_controller_metadata reports station g1-lab and report a mismatch instead of acting. "
        ASPIRE_HAND_TOOLS=() ;;
 esac
 ASPIRE_STARTUP="${ASPIRE_ROBOT_NOTE}This is an observation-only startup. Discover the CAP tools, observe the station, report readiness, and do not home or move the robot."

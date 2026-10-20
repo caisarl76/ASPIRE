@@ -35,6 +35,10 @@ GRIP_SQUEEZE = 0.08  # closure added past the contact point: a firm, not crushin
 class G1RealAdapter(YamRealAdapter):
     """Protocol-facing wrapper over a G1 station."""
 
+    # An open Dex3 hand reads ~0.94 when its long finger joints sit ~0.1 rad off
+    # zero (the left hand on PC2 .222, 2026-10-20); that is open for approaching.
+    home_gripper_open_min = 0.9
+
     def __init__(
         self,
         env: Any,

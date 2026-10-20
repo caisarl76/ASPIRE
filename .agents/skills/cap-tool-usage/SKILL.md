@@ -125,4 +125,5 @@ Applies when the capability graph shows `g1_real` (operator runbook: `docs/g1-re
   physical. Do not try to start or stop the controller.
 - Task recipes: [bottle pick and place](../../../examples/g1_real/bottle_pick/TASK_CONTEXT.md)
   needs Dex3 hands (PC2 `.222`); [palm touch](../../../examples/g1_real/bottle_touch/TASK_CONTEXT.md)
-  is for the motorless rubber hands (PC2 `.223`). Read the one that matches the task.
+  works on both robots and says what differs per hand. Read the one that matches the
+  task; `cap_g1_real__get_controller_metadata` reports the connected `station`.
