@@ -7,6 +7,7 @@ from cap_harness.g1_real.cameras import ComposedCameraRgbd
 from cap_harness.g1_real.codec import upper_body_from_arms
 from cap_harness.g1_real.config import load_g1_station_config
 from cap_harness.g1_real.env import G1Env
+from cap_harness.yam_real.cameras import SyntheticCamera
 
 
 def build_real_station(
@@ -29,7 +30,9 @@ def build_real_station(
             depth_scale_m=cfg.camera.depth_scale_m,
         )
         if enable_camera
-        else None
+        # The Observation contract needs a camera, so "no camera" is synthetic
+        # frames: enough for a run that only measures the arms.
+        else SyntheticCamera()
     )
     return G1Env(cfg, body, camera=camera)
 
@@ -41,8 +44,6 @@ def build_fake_station(
     tau_s: float = 0.02,
 ) -> G1Env:
     """An engaged G1 over a first-order fake body, starting at the profile's home."""
-    from cap_harness.yam_real.cameras import SyntheticCamera
-
     cfg = load_g1_station_config(station, config_root=config_root)
     home = cfg.home_joint_positions
     body = FakeBodyClient(

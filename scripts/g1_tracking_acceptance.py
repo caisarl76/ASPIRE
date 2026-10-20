@@ -156,8 +156,14 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     try:
-        build = build_fake_station if args.fake else build_real_station
-        env = build(args.station, config_root=args.station_config_root)
+        if args.fake:
+            env = build_fake_station(args.station, config_root=args.station_config_root)
+        else:
+            # Tracking only: synthetic frames, so a PC2 reboot that took the camera
+            # server down cannot fail every segment (it did, twice).
+            env = build_real_station(
+                args.station, config_root=args.station_config_root, enable_camera=False
+            )
     except Exception as exc:
         print(f"SETUP ERROR: {exc}")
         return 2
