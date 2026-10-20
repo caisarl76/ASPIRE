@@ -27,6 +27,26 @@ robot_cfg:
       cspace_distance_weight: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
       max_jerk: 500.0
       max_acceleration: 15.0
+    # Only these links' spheres are loaded: this cuRobo skips collision_spheres
+    # entirely without the list (kinematics_loader.py), which left every G1 plan
+    # unchecked against the world and itself until 2026-10-20.
+    collision_link_names:
+      - torso_link
+      - head_link
+      - left_shoulder_pitch_link
+      - left_shoulder_roll_link
+      - left_shoulder_yaw_link
+      - left_elbow_link
+      - left_wrist_roll_link
+      - left_wrist_pitch_link
+      - left_wrist_yaw_link
+      - right_shoulder_pitch_link
+      - right_shoulder_roll_link
+      - right_shoulder_yaw_link
+      - right_elbow_link
+      - right_wrist_roll_link
+      - right_wrist_pitch_link
+      - right_wrist_yaw_link
     collision_spheres:
       torso_link:
         - center: [0.0, 0.0, 0.05]
@@ -59,7 +79,9 @@ robot_cfg:
         - center: [0.02, 0, 0]
           radius: 0.04
       left_wrist_yaw_link:
-        - center: [0.19, 0, 0]
+        - center: [0.10, 0, 0]  # palm (rubber hand and Dex3 both span x 0.04-0.17)
+          radius: 0.045
+        - center: [0.19, 0, 0]  # fingers / grasp site
           radius: 0.06
       right_shoulder_pitch_link:
         - center: [0, -0.04, -0.01]
@@ -82,7 +104,9 @@ robot_cfg:
         - center: [0.02, 0, 0]
           radius: 0.04
       right_wrist_yaw_link:
-        - center: [0.19, 0, 0]
+        - center: [0.10, 0, 0]  # palm (rubber hand and Dex3 both span x 0.04-0.17)
+          radius: 0.045
+        - center: [0.19, 0, 0]  # fingers / grasp site
           radius: 0.06
     self_collision_ignore:
       torso_link: [left_shoulder_pitch_link, right_shoulder_pitch_link, head_link]

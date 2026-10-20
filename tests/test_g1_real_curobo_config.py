@@ -110,3 +110,13 @@ def test_g1_real_home_pose_has_no_unignored_sphere_overlap():
         and np.linalg.norm(ca - cb) < ra + rb + max(buffers[a], buffers[b])
     ]
     assert not clashes
+
+
+def test_every_sphere_link_is_a_collision_link_and_hands_have_a_palm():
+    # cuRobo loads no spheres at all without collision_link_names: plans were unchecked.
+    _, kin = _kinematics()
+    spheres = kin["collision_spheres"]
+    assert set(kin["collision_link_names"]) == set(spheres)
+    for side in ("left", "right"):
+        centers = [s["center"][0] for s in spheres[f"{side}_wrist_yaw_link"]]
+        assert any(0.05 <= x <= 0.15 for x in centers), f"{side} palm is not modeled"
