@@ -17,7 +17,7 @@ have not been run; fill in the result placeholders when you do.
 | SONIC feedback PUB `g1_debug` | PC2 `unitree@192.168.0.223` | 5557 | ASPIRE SUB |
 | Composed camera PUB (RGB + aligned depth) | PC2 | 5555 | ASPIRE SUB |
 | SAM3 | `192.168.75.174` (`h100_174`), GPU 3, Docker container `jihun-aspire-sam3-174-gpu3-261020` | 8114 | ASPIRE HTTP |
-| cuRobo | `.62`, else `192.168.75.173` / `.174` | 8118 | ASPIRE HTTP |
+| cuRobo | `192.168.75.174` (`h100_174`), GPU 2, Docker container `jihun-aspire-curobo-174-gpu2-261020` | 8118 | ASPIRE HTTP |
 | CAP MCP / Viser | `.62` | 8222 / 8080 | agent / operator |
 
 SAM3 runs from `docker/sam3.Dockerfile` (image `jihun-aspire-sam3:<commit>`, built
@@ -52,7 +52,8 @@ g1-222` or `g1-lab`; the agent launcher tells the agent which hands it has and w
 recipe applies, and on 223 does not pre-approve the gripper and hand tools:
 
 ```bash
-scripts/start_system2.sh --robot 222 --allow-motion --viser-port 8081 --sam3-url http://192.168.75.174:8114
+scripts/start_system2.sh --robot 222 --allow-motion --viser-port 8081 \
+  --sam3-url http://192.168.75.174:8114 --curobo-url http://192.168.75.174:8118
 scripts/start_system2_agent.sh --robot 222 --allow-motion
 ```
 
@@ -201,7 +202,16 @@ for the right arm's own home pose (from `G1Kinematics.forward_kinematics`). Expe
 `ok=True`. Then `plan_to_pose` to the home pose + `[0.05, 0, 0.05]`: expect
 `ok=True` and `len(trajectory.joint_positions) <= 120`.
 
-Pending operator run. Result: ______
+Result (2026-10-20, service in Docker on `h100_174` GPU 2, image built from
+`docker/curobo.Dockerfile`): IK for the right arm's home pose `ok` (about 60 s on the
+first call while cuRobo compiles its kernels, then 0.02 s); `plan_to_pose` to home +
+`[0.05, 0, 0.05]` `ok` with 127 waypoints, more than the default `max_steps` of 120,
+so pass `max_steps: 300` with cuRobo. The smoke found that the G1 model had no
+`collision_link_names`, so cuRobo loaded no spheres and every plan was unchecked;
+fixed in `47a746c` (plus a palm sphere per hand). After the fix, a return from 8 cm
+above a closed box to home keeps the fingertip and palm spheres 0.3 to 1.7 cm clear
+of it (it went 4 cm inside before); with only the top and near face (what the head
+camera sees) the planner refuses rather than cutting through.
 
 ### Fake station
 

@@ -123,6 +123,13 @@ Applies when the capability graph shows `g1_real` (operator runbook: `docs/g1-re
 - `cap_g1_real__get_controller_metadata` reports contract `g1-sonic-v1-planner-stream`.
 - SONIC owns balance and the keep-alive; the operator engages it and the e-stops are
   physical. Do not try to start or stop the controller.
+- **cuRobo on the G1** plans around what the head camera's depth shows (the
+  robot's own arms are cut out; the floor is dropped). Its plans run about 120 to
+  260 waypoints, so pass `max_steps: 300` with `trajectory_planner: "curobo"`. It
+  sees only the faces the camera sees: space behind or under an object counts as
+  free, and a scene it cannot solve is refused ("could not find a feasible plan"),
+  which moves nothing. On a refusal, raise the hand and come back toward the body in
+  short `interpolation` moves (see the next item), then plan again.
 - **Leaving a work surface.** Neither the planner nor Home knows about tables,
   boxes or the robot's own legs. After releasing or touching something, back the
   hand away from the object, raise it 10 to 15 cm above the surface, and bring it
