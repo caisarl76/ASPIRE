@@ -13,6 +13,7 @@ import imageio.v3 as iio
 import msgpack
 import msgpack_numpy
 import numpy as np
+from scipy.ndimage import maximum_filter, minimum_filter
 import zmq
 
 from cap_harness.yam_real.cameras import CameraFrame
@@ -20,6 +21,25 @@ from cap_harness.yam_real.cameras import CameraFrame
 logger = logging.getLogger(__name__)
 
 _POLL_MS = 100
+# Flying-pixel filter: a pixel whose 5x5 neighbourhood spans more depth than
+# max(3 cm, 5% of its own depth) sits on a depth jump. The RealSense reports
+# mixed depths there, which back-project into points between (or far behind)
+# the object and its background; a single such pixel stretched a localized
+# bottle's bounding box to 1.4 m on the robot (2026-10-20).
+_EDGE_WINDOW_PX = 5
+_EDGE_MIN_JUMP_M = 0.03
+_EDGE_REL_JUMP = 0.05
+
+
+def drop_depth_edges(depth_m: np.ndarray) -> np.ndarray:
+    """``depth_m`` with pixels on depth discontinuities set to 0 (no return)."""
+    valid = depth_m > 0.0
+    if not np.any(valid):
+        return depth_m
+    high = maximum_filter(np.where(valid, depth_m, -np.inf), size=_EDGE_WINDOW_PX)
+    low = minimum_filter(np.where(valid, depth_m, np.inf), size=_EDGE_WINDOW_PX)
+    edge = valid & (high - low > np.maximum(_EDGE_MIN_JUMP_M, _EDGE_REL_JUMP * depth_m))
+    return np.where(edge, 0.0, depth_m)
 
 
 def _decode_rgb(value: Any) -> np.ndarray:
@@ -113,7 +133,7 @@ class ComposedCameraRgbd:
             )
         else:
             scale = intr.get("depth_scale", self._depth_scale_m)
-            depth_m = np.asarray(depth).astype(np.float64) * scale
+            depth_m = drop_depth_edges(np.asarray(depth).astype(np.float64) * scale)
         if depth_m is None:
             depth_m = np.zeros((h, w), dtype=np.float64)
         frame = CameraFrame(rgb=rgb, depth_m=depth_m, intrinsics=k, timestamp_s=received_s)

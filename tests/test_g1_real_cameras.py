@@ -7,7 +7,7 @@ import msgpack_numpy as m
 import numpy as np
 import zmq
 
-from cap_harness.g1_real.cameras import ComposedCameraRgbd
+from cap_harness.g1_real.cameras import ComposedCameraRgbd, drop_depth_edges
 
 INTR = {
     "fx": 600.0,
@@ -150,3 +150,21 @@ def test_depth_shape_mismatch_is_dropped_to_zero():
     assert frame.intrinsics[0, 0] == 600.0
     cam.close()
     pub.close()
+
+
+def test_depth_edges_are_dropped_and_surfaces_kept():
+    depth = np.full((40, 40), 1.0)  # background plane
+    depth[10:30, 10:30] = 0.5  # object in front
+    depth[10, 20] = 0.8  # flying pixel on the object's edge
+    depth[0, 0] = 0.0  # no return stays no return
+    out = drop_depth_edges(depth)
+    assert out[10, 20] == 0.0  # the mixed depth is gone
+    assert out[20, 20] == 0.5 and out[35, 35] == 1.0  # interiors untouched
+    assert np.all(out[10:30, 10:30][4:-4, 4:-4] == 0.5)
+    assert out[0, 0] == 0.0 and np.all(out[(out > 0)] > 0.4)
+
+
+def test_slanted_surface_is_not_an_edge():
+    # a plane receding 3 mm per pixel (a table seen at 45 deg) has no jump
+    depth = 0.6 + 0.003 * np.arange(60)[:, None] * np.ones((60, 60))
+    assert np.all(drop_depth_edges(depth) == depth)

@@ -37,9 +37,10 @@ reaches farther; it touches the bottle's rear-right side instead of its right si
 ## Strategy
 
 1. Localize the bottle in `ego_view` (`"water bottle"`). Reject a mask on the wrong
-   object or an implausible depth or size. Take the radius `r` from its width (about
-   0.03 to 0.04 m). Depth sees only the near surface, so the returned center is about
-   one radius too close: the bottle axis is at `A = (cx + r, cy, z)`.
+   object, or a box larger than about 0.12 m across or 0.30 m tall: that is depth
+   smear, not a bottle. Use the returned center as the bottle axis, `A = (cx, cy, z)`;
+   on the robot it lands within about 1 cm. Take `r = 0.033` m for a 500 ml bottle:
+   the returned extents run 1 to 2 cm wider than the bottle.
 2. Pick a contact height `z` on the bottle's upper half, below the cap, and at least
    0.06 m above the surface it stands on (the hand reaches 0.043 m below the site).
    A higher contact point reaches farther.
@@ -55,6 +56,9 @@ reaches farther; it touches the bottle's rear-right side instead of its right si
 5. Approach along `+n` with steps of at most 2 cm toward `S`, and look (`observe`)
    after each step. Stop at the first step where the image shows the palm on the
    bottle or the bottle moving. Never push past contact.
+   The palm is the flat inner face 7 to 15 cm from the wrist joint. If the wrist or
+   forearm reaches the bottle first, the hand is too far forward: retract along `-n`,
+   shift the contact target 5 cm back along `-f`, and approach again.
 6. Retract 8 cm along `-n`, observe, and report.
 
 ## Tracking error
