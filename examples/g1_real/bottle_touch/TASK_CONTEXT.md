@@ -21,29 +21,41 @@ schemas are authoritative. Poses are in the `torso` frame.
 `cap_move_to_pose` places the `right_grasp_site`, 0.19 m along the wrist axis, which
 is past the end of this hand, not on the palm.
 
-- **Handshake orientation**, `quaternion_wxyz: [1, 0, 0, 0]`: fingers point forward
-  (+x), thumb up (+z), palm facing left (+y), toward the body midline.
-- In that orientation the palm contact point is the site position plus
-  `(-0.08, +0.03, 0.0)` m. To put the palm on a point `C`, command the site at
-  `C + (0.08, -0.03, 0.0)`.
+The hand is held level with the thumb up, turned by a yaw `t` about torso +z
+(`t <= 0` turns the fingers toward the right). With `t` in radians:
+
+- finger direction `f = (cos t, sin t, 0)`, palm normal `n = (-sin t, cos t, 0)`;
+- orientation `quaternion_wxyz = [cos(t/2), 0, 0, sin(t/2)]`:
+  `t = 0`: `[1, 0, 0, 0]` (handshake: fingers forward, palm facing +y);
+  `t = -30 deg`: `[0.966, 0, 0, -0.259]`; `t = -45 deg`: `[0.924, 0, 0, -0.383]`;
+- the palm contact point is the site position `- 0.08 f + 0.03 n`, so to put the
+  palm on a point `C`, command the site at `C + 0.08 f - 0.03 n`.
+
+Turning the hand right (`t` negative) brings the site closer to the palm in x and
+reaches farther; it touches the bottle's rear-right side instead of its right side.
 
 ## Strategy
 
-1. Localize the bottle in `ego_view` (`"water bottle"`). Take its center `(cx, cy, cz)`
-   and radius `r` from its width (about 0.03 to 0.04 m). Reject a mask on the wrong
-   object or an implausible depth or size.
-2. Check reach before moving. It is reliable for a bottle center at x 0.25 to 0.30 m
-   and y 0.0 to -0.10 m, and to x 0.40 m when the contact point is at or above
-   the torso origin height (z >= 0). Otherwise ask the operator to move the bottle.
-3. Contact point `C = (cx, cy - r, cz)`: the bottle's right side, because the right
-   palm faces +y. Contact at mid-height or a little above, never near the table.
-4. Pre-contact: site at `C + (0.08, -0.11, 0.0)`, 8 cm right of contact, in the
-   handshake orientation. If the hand starts low or close to the body, first raise
-   it above the contact height; the planning model has no table and no legs.
-5. Approach in +y with steps of at most 2 cm toward `C + (0.08, -0.03, 0.0)`, and look
-   (`observe`) after each step. Stop at the first step where the image shows the palm
-   on the bottle or the bottle moving. Never push past contact.
-6. Retract 8 cm in -y, observe, and report.
+1. Localize the bottle in `ego_view` (`"water bottle"`). Reject a mask on the wrong
+   object or an implausible depth or size. Take the radius `r` from its width (about
+   0.03 to 0.04 m). Depth sees only the near surface, so the returned center is about
+   one radius too close: the bottle axis is at `A = (cx + r, cy, z)`.
+2. Pick a contact height `z` on the bottle's upper half, below the cap, and at least
+   0.06 m above the surface it stands on (the hand reaches 0.043 m below the site).
+   A higher contact point reaches farther.
+3. For `t = 0`: contact point `C = A - r n`, contact site `S = C + 0.08 f - 0.03 n`,
+   pre-contact site `P = S - 0.08 n` (8 cm back along the palm normal).
+4. Move to `P` in that orientation. If the hand starts low or close to the body, first
+   raise it above `z`; the planning model has no table and no legs. **Reach is decided
+   by trying, not by a distance rule**: an `ik_unreachable` or "outside the configured
+   limits" refusal moves nothing. On a refusal retry with `t = -30 deg`, then
+   `t = -45 deg`, then a contact point 2 to 3 cm higher. As a guide, IK reaches a
+   bottle axis about 0.46 m in front of the torso at 0.10 m contact height. Ask the
+   operator to move the bottle only after all of these are refused.
+5. Approach along `+n` with steps of at most 2 cm toward `S`, and look (`observe`)
+   after each step. Stop at the first step where the image shows the palm on the
+   bottle or the bottle moving. Never push past contact.
+6. Retract 8 cm along `-n`, observe, and report.
 
 ## Tracking error
 
