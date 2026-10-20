@@ -16,9 +16,18 @@ have not been run; fill in the result placeholders when you do.
 | ASPIRE SONIC command PUB (`command`, `planner`) | workstation `192.168.0.62` | 5556 | PC2 `deploy.sh` connects |
 | SONIC feedback PUB `g1_debug` | PC2 `unitree@192.168.0.223` | 5557 | ASPIRE SUB |
 | Composed camera PUB (RGB + aligned depth) | PC2 | 5555 | ASPIRE SUB |
-| SAM3 | `.62`, else `192.168.75.173` / `.174` | 8114 | ASPIRE HTTP |
+| SAM3 | `192.168.75.174` (`h100_174`), GPU 3, Docker container `jihun-aspire-sam3-174-gpu3-261020` | 8114 | ASPIRE HTTP |
 | cuRobo | `.62`, else `192.168.75.173` / `.174` | 8118 | ASPIRE HTTP |
 | CAP MCP / Viser | `.62` | 8222 / 8080 | agent / operator |
+
+SAM3 runs from `docker/sam3.Dockerfile` (image `jihun-aspire-sam3:<commit>`, built
+on the host from a clone under `~/aspire-sam3/ASPIRE`). The gated weights are a
+read-only Hugging Face cache at `~/aspire-sam3/hf`, streamed from the workstation, so
+the shared `kube` account holds no token; the container runs offline with
+`--restart unless-stopped`. Check it with
+`curl --noproxy '*' http://192.168.75.174:8114/healthz`. Verified 2026-10-20 on a
+live frame: "water bottle" 0.96 and "black box" 0.91, and the floor back-projects
+level at 0.84 m below the torso origin, so the model's camera transform holds.
 
 Only one process can bind 5556 on the workstation. **Stop the PICO manager / XR
 bridge on `.62` before starting ASPIRE.** If SAM3/cuRobo run on another GPU host,
