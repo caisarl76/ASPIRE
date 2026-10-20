@@ -41,6 +41,15 @@ CONTROL_CONTRACT_VERSION = "g1-sonic-v1-planner-stream"
 KEEP_ALIVE_PERIOD_S = 0.02
 #: Seconds a full open-to-closed hand transition is given when no duration is passed.
 HAND_FULL_TRAVEL_S = 1.0
+# Home retreat: a hand raised more than RETREAT_ABOVE_HOME_M above its home height
+# (working over a table or a box) first lifts RETREAT_LIFT_M and comes back over its
+# home position at that height, then descends. A straight joint-space Home from
+# there swept the hand down into the box it had just placed a bottle on (2026-10-20).
+RETREAT_ABOVE_HOME_M = 0.05
+RETREAT_LIFTS_M = (0.08, 0.04, 0.0)  # tried in order until reachable
+RETREAT_STEP_M = 0.02
+RETREAT_SPEED_M_S = 0.10
+RETREAT_IK_TOL_M = 0.01
 #: A gripper column within this of the measured scalar means "hold the hand as commanded".
 HAND_SCALAR_HOLD_TOL = 1e-3
 
@@ -566,18 +575,111 @@ class G1Env:
             cfg = self.config.hands[side]
             hands[side] = chain if keep_grippers else codec.hand_pose(1.0, cfg.open, cfg.closed)
             columns[side] = [[codec.hand_scalar(hands[side], cfg.open, cfg.closed)]]
+        home = {side: np.asarray(self.config.arms[side].home_joints, float) for side in ARMS}
+        retreat = self._home_retreat(home)  # (k, 2, 7) joint rows, possibly empty
+        rows = {side: [*retreat[:, i], home[side]] for i, side in enumerate(ARMS)}
+        n = len(rows["left"])
+        step_s = RETREAT_STEP_M / RETREAT_SPEED_M_S
+        timestamps = [i * step_s for i in range(n - 1)]
+        timestamps.append((timestamps[-1] if timestamps else 0.0) + max(0.0, float(duration_s)))
         batch = YamActionBatch.joint_abs(
-            [0.0],
-            [self.config.arms["left"].home_joints],
-            [self.config.arms["right"].home_joints],
-            columns["left"],
-            columns["right"],
+            timestamps,
+            rows["left"],
+            rows["right"],
+            columns["left"] * n,
+            columns["right"] * n,
             source="cap_home",
-            meta={"hand_joints": {side: hands[side].reshape(1, HAND_DOF) for side in ARMS}},
+            meta={"hand_joints": {side: np.tile(hands[side], (n, 1)) for side in ARMS}},
         )
-        return self.execute_action_batch(
-            batch, start_interp_s=max(0.0, float(duration_s)), settle_s=0.2
-        )
+        # The retreat's first row is the chain itself; without one the single
+        # home row is reached over the start interpolation, as before.
+        start_s = step_s if n > 1 else max(0.0, float(duration_s))
+        result = self.execute_action_batch(batch, start_interp_s=start_s, settle_s=0.2)
+        if isinstance(result, dict):
+            result["retreat_waypoints"] = int(len(retreat))
+        return result
+
+    def _home_retreat(self, home: dict[str, np.ndarray]) -> np.ndarray:
+        """Joint rows that lift each raised hand, bring it back over home, and lower it.
+
+        Cartesian waypoints every ``RETREAT_STEP_M`` from the commanded (chain)
+        pose: straight up by the first reachable lift, horizontally to above
+        the home grasp-site position (orientation held), then straight down to
+        it while the orientation blends into home's, so the joint move that
+        follows is a small wrist adjustment rather than a swing (a joint-space
+        move from above home swung the hand back out over the surface). A hand
+        within ``RETREAT_ABOVE_HOME_M`` of its home height holds meanwhile.
+        Returns an empty ``(0, 2, 7)`` array when no hand is raised; a waypoint
+        IK cannot reach ends the retreat at the last reachable one.
+        """
+        from scipy.spatial.transform import Rotation, Slerp
+
+        q17, *_ = self.last_command()
+        _, chain_left, chain_right = codec.arms_from_upper_body(q17)
+        chain = {"left": chain_left, "right": chain_right}
+        fk = self.kin.forward_kinematics(chain["left"], chain["right"])
+        hk = self.kin.forward_kinematics(home["left"], home["right"])
+        p0 = {"left": np.asarray(fk[0], float), "right": np.asarray(fk[2], float)}
+        q0 = {"left": np.asarray(fk[1], float), "right": np.asarray(fk[3], float)}
+        home_p = {"left": np.asarray(hk[0], float), "right": np.asarray(hk[2], float)}
+        home_q = {"left": np.asarray(hk[1], float), "right": np.asarray(hk[3], float)}
+        raised = {s: p0[s][2] > home_p[s][2] + RETREAT_ABOVE_HOME_M for s in ARMS}
+        if not any(raised.values()):
+            return np.zeros((0, 2, ARM_DOF))
+        blend = {s: Slerp([0.0, 1.0], Rotation.from_quat([q0[s], home_q[s]])) for s in ARMS}
+
+        def segment(a: dict, b: dict, *, descend: bool = False) -> list[dict]:
+            span = max(float(np.linalg.norm(b[s] - a[s])) for s in ARMS)
+            k = max(1, int(np.ceil(span / RETREAT_STEP_M)))
+            return [
+                {
+                    s: (
+                        a[s] + (b[s] - a[s]) * (i / k),
+                        blend[s](i / k).as_quat() if descend and raised[s] else q0[s],
+                    )
+                    for s in ARMS
+                }
+                for i in range(1, k + 1)
+            ]
+
+        def solve(target: dict, seed: dict) -> tuple[bool, dict]:
+            self.kin.seed(seed["left"], seed["right"])
+            left, right = self.kin.inverse_kinematics(
+                *target["left"], *target["right"], seeded=True
+            )
+            got = self.kin.forward_kinematics(left, right)
+            ok = all(
+                np.linalg.norm(got[2 * i] - target[s][0]) <= RETREAT_IK_TOL_M
+                for i, s in enumerate(ARMS)
+            )
+            return ok, {"left": left, "right": right}
+
+        rows = [chain]
+        for lift in RETREAT_LIFTS_M:
+            p1 = {s: p0[s] + np.array([0.0, 0.0, lift if raised[s] else 0.0]) for s in ARMS}
+            p2 = {
+                s: np.array([home_p[s][0], home_p[s][1], p1[s][2]]) if raised[s] else p0[s]
+                for s in ARMS
+            }
+            p3 = {s: home_p[s] if raised[s] else p0[s] for s in ARMS}
+            targets = [
+                *(segment(p0, p1) if lift else []),
+                *segment(p1, p2),
+                *segment(p2, p3, descend=True),
+            ]
+            path, seed, complete = [], chain, True
+            for target in targets:
+                ok, seed = solve(target, seed)
+                if not ok:
+                    complete = False
+                    break
+                path.append(seed)
+            if complete or lift == RETREAT_LIFTS_M[-1]:
+                if not complete:
+                    _log.warning("home retreat stopped after %d of its waypoints (IK)", len(path))
+                rows += path
+                break
+        return np.array([[r["left"], r["right"]] for r in rows])
 
     # -- lifecycle ---------------------------------------------------------
 

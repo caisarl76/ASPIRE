@@ -70,7 +70,8 @@ reaches farther; it touches the bottle's rear-right side instead of its right si
    forearm reaches the bottle first, the hand is too far forward: retract along `-n`,
    shift the contact target 5 cm back along `-f`, and approach again. On Dex3, if
    the thumb reaches it first, shift the target 2 cm along `+f` instead.
-6. Retract 8 cm along `-n`, observe, and report.
+6. Retract 8 cm along `-n`, then raise the hand 10 to 15 cm before any other move
+   (see "Leaving a work surface" in the tool guide), observe, and report.
 
 ## Tracking error
 

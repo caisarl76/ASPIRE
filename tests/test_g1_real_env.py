@@ -550,3 +550,52 @@ def test_settle_is_fixed_when_the_knob_is_zero():
         assert result["settle_ticks"] == round(0.2 * 50)
     finally:
         e.close()
+
+
+def _raise_right_hand(e, target=(0.35, -0.15, 0.08)):
+    """Command the right arm to a raised pose over the work surface (via IK)."""
+    cfg = e.config
+    left_home = np.asarray(cfg.arms["left"].home_joints, float)
+    lp, lq, _, _ = e.kin.forward_kinematics(left_home, np.asarray(cfg.arms["right"].home_joints))
+    e.kin.seed(left_home, np.asarray(cfg.arms["right"].home_joints))
+    handshake = np.array([0.0, 0.0, 0.0, 1.0])  # xyzw; the palm-touch orientation
+    _, right = e.kin.inverse_kinematics(lp, lq, np.asarray(target), handshake, seeded=True)
+    result = e.execute_action_batch(
+        YamActionBatch.joint_abs([0.0, 1.0], [left_home] * 2, [right] * 2, source="test"),
+        settle_s=0.0,
+    )
+    assert result["success"] is True, result
+    return right
+
+
+def test_home_from_a_raised_hand_lifts_and_comes_back_before_descending(env, monkeypatch):
+    import cap_harness.g1_real.env as env_module
+
+    monkeypatch.setattr(env_module, "RETREAT_SPEED_M_S", 0.2)  # 2x the profile speed, test time
+    _raise_right_hand(env)
+    cfg = env.config
+    home_right = np.asarray(cfg.arms["right"].home_joints, float)
+    home_pos = env.kin.forward_kinematics(np.asarray(cfg.arms["left"].home_joints), home_right)[2]
+    env.body.commands.clear()
+    result = env.go_home(duration_s=0.5)
+    assert result["success"] is True and result["retreat_waypoints"] > 0
+    left0 = np.asarray(cfg.arms["left"].home_joints)
+    path = np.array(
+        [
+            env.kin.forward_kinematics(left0, codec.arms_from_upper_body(c[0])[2])[2]
+            for c in env.body.commands
+        ]
+    )
+    start_z = path[0, 2]
+    out_over_surface = path[:, 0] > home_pos[0] + 0.03
+    # never below its starting height while still out over the surface it worked on
+    assert path[out_over_surface, 2].min() >= start_z - 0.01
+    assert path[:, 2].max() >= start_z + 0.05  # it lifted first
+    np.testing.assert_allclose(
+        codec.arms_from_upper_body(env.last_command()[0])[2], home_right, atol=1e-6
+    )
+
+
+def test_home_near_home_goes_straight_there(env):
+    result = env.go_home(duration_s=0.3)
+    assert result["success"] is True and result["retreat_waypoints"] == 0

@@ -123,6 +123,13 @@ Applies when the capability graph shows `g1_real` (operator runbook: `docs/g1-re
 - `cap_g1_real__get_controller_metadata` reports contract `g1-sonic-v1-planner-stream`.
 - SONIC owns balance and the keep-alive; the operator engages it and the e-stops are
   physical. Do not try to start or stop the controller.
+- **Leaving a work surface.** Neither the planner nor Home knows about tables,
+  boxes or the robot's own legs. After releasing or touching something, back the
+  hand away from the object, raise it 10 to 15 cm above the surface, and bring it
+  back toward the body past the surface's near edge before any large move. Never
+  lower the hand while it is over a surface except to place or touch. Home does
+  this on its own from a raised hand (lift, back over the home position, straight
+  down); a `cap_move_to_pose` to a start pose does not.
 - Task recipes: [bottle pick and place](../../../examples/g1_real/bottle_pick/TASK_CONTEXT.md)
   needs Dex3 hands (PC2 `.222`); [palm touch](../../../examples/g1_real/bottle_touch/TASK_CONTEXT.md)
   works on both robots and says what differs per hand. Read the one that matches the

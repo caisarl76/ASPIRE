@@ -56,6 +56,13 @@ scripts/start_system2.sh --robot 222 --allow-motion --viser-port 8081 --sam3-url
 scripts/start_system2_agent.sh --robot 222 --allow-motion
 ```
 
+**Home retreat (2026-10-20).** Home from a raised hand (more than 5 cm above its
+home height) first lifts it 8 cm (4 cm or none if out of reach), brings it back over
+its home position at that height, and lowers it straight down, in 2 cm IK waypoints
+at 0.10 m/s, before the usual joint move; the result reports `retreat_waypoints`.
+A Home from over a work surface therefore takes about 8 s. The straight joint-space
+Home it replaces swept the hand down into the box after a bottle placement.
+
 Only one process can bind 5556 on the workstation. **Stop the PICO manager / XR
 bridge on `.62` before starting ASPIRE.** If SAM3/cuRobo run on another GPU host,
 point `sam3_url` / `curobo_url` there (profile fields, or `--sam3-url` /

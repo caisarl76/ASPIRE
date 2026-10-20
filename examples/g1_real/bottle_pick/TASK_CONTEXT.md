@@ -31,7 +31,8 @@ robot rather than forcing a pose.
 4. Lift a few centimetres. Verify the bottle follows from the returned image and the
    wrist joint change; a closure value or successful motion is not proof.
 5. Move to the place spot, lower in bounded steps, open the hand with
-   `cap_open_gripper`, retract, and
+   `cap_open_gripper`, back the hand away from the bottle, raise it 10 to 15 cm
+   above the box before any other move (the planner does not know the box is there), and
    inspect that the bottle stands.
 6. Report the result and the evidence.
 
