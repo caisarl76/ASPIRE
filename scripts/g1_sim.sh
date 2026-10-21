@@ -27,6 +27,9 @@ CHECKPOINT="${G1_SIM_CHECKPOINT:-sonic_v1_1}"
 RUN_DIR="${G1_SIM_RUN_DIR:-/tmp/${USER:-aspire}/aspire-g1-sim}"
 SIM=aspire-g1sim DEPLOY=aspire-g1sim-deploy CAP=aspire-g1sim-cap
 CAMERA_PORT=5565 COMMAND_PORT=5566 FEEDBACK_PORT=5567 MCP_PORT=8223
+# tmux sessions inherit its server's environment; a snap terminal's EGL vendor dirs hide
+# NVIDIA's EGL and ROS's libddsc breaks the sim's CycloneDDS.
+CLEAN_ENV="env -u __EGL_VENDOR_LIBRARY_DIRS -u LD_LIBRARY_PATH"
 mkdir -p "$RUN_DIR"
 
 port_bound() { ss -ltn | grep -q ":$1 "; }
@@ -52,12 +55,12 @@ up() {
   # A previous run's "Init Done" would satisfy the readiness wait before the new deploy
   # has even truncated its log.
   rm -f "$RUN_DIR"/{sim,deploy,cap}.log "$RUN_DIR/sim.pid"
-  tmux new-session -d -s "$SIM" "cd '$WBC_ROOT' && MUJOCO_GL=egl PYTHONPATH= exec .venv_sim/bin/python \
+  tmux new-session -d -s "$SIM" "cd '$WBC_ROOT' && MUJOCO_GL=egl PYTHONPATH= exec $CLEAN_ENV .venv_sim/bin/python \
 '$ASPIRE_ROOT/scripts/g1_sim/sim_rgbd.py' --port $CAMERA_PORT --pid-file '$RUN_DIR/sim.pid' \
 --layout-file '$RUN_DIR/layout.json' --yaw-deg ${G1_SIM_YAW_DEG:-0} > '$RUN_DIR/sim.log' 2>&1"
   wait_for 60 "the sim camera on $CAMERA_PORT" port_bound "$CAMERA_PORT"
   local policy="policy/$CHECKPOINT"
-  tmux new-session -d -s "$DEPLOY" "cd '$WBC_ROOT/gear_sonic_deploy' && export TensorRT_ROOT='$TRT_ROOT' \
+  tmux new-session -d -s "$DEPLOY" "cd '$WBC_ROOT/gear_sonic_deploy' && unset __EGL_VENDOR_LIBRARY_DIRS LD_LIBRARY_PATH && export TensorRT_ROOT='$TRT_ROOT' \
 && source scripts/setup_env.sh && exec ./target/release/g1_deploy_onnx_ref lo $policy/model_decoder.onnx \
 reference/example/ --obs-config $policy/observation_config.yaml --encoder-file $policy/model_encoder.onnx \
 --planner-file planner/target_vel/V2/planner_sonic.onnx --input-type zmq_manager --output-type zmq \
