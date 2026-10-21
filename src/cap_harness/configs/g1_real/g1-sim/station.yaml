@@ -74,6 +74,10 @@ controller:
   # the arm stops rather than a transient; measuring early made corrections
   # overshoot by 20-35 mm on the robot (2026-10-20). 0 keeps the fixed settle.
   settle_until_still_max_s: 3.0
+  # Refuse an arm trajectory that brings a forearm or hand within this of the legs or
+  # pelvis (fitted full-body model, legs from SONIC feedback), unless it moves away.
+  # Neither the planners nor Home's model have legs; the acceptance hit the thigh.
+  leg_clearance_m: 0.03
 
 camera:
   role: ego_view

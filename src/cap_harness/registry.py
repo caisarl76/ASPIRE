@@ -81,6 +81,7 @@ G1_REAL_PUBLIC_TOOL_NAMES = frozenset(
         "g1_real.get_controller_metadata",
         "g1_real.set_hand_joints",
         "g1_real.get_hand_state",
+        "g1_real.get_posture",
     }
 )
 

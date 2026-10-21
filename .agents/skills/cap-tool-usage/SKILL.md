@@ -137,7 +137,14 @@ Applies when the capability graph shows `g1_real` (operator runbook: `docs/g1-re
   (the sim has `third_view`, a fixed camera ahead and to the right). They show the
   hand and the object from the side, which is what the head camera loses once the
   hand is in front of the object. Use them to judge contact, grasp and placement.
-  They have no 3D: localize with `ego_view` only.
+  They have no 3D: localize with `ego_view` only. Motion results include every
+  camera; `observe` returns only `ego_view` unless asked, so call
+  `observe(cameras=["ego_view", "third_view"])`.
+- **Posture and the legs.** `cap_g1_real__get_posture()` reports, in the torso frame,
+  each arm's shoulder, elbow, wrist, palm center and palm normal, the hips, knees and
+  ankles, and each forearm's clearance to the legs. Arm trajectories that would bring
+  a forearm or hand within 3 cm of the legs are refused ("nothing moved"), unless
+  they move away from them; pick a target higher or farther out.
 - **Leaving a work surface.** Neither the planner nor Home knows about tables,
   boxes or the robot's own legs. After releasing or touching something, back the
   hand away from the object, raise it 10 to 15 cm above the surface, and bring it

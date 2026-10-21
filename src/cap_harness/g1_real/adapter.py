@@ -15,7 +15,14 @@ from typing import Any
 
 import numpy as np
 
-from cap_harness.contracts import ExecutionResult, RobotPlanningContext, RobotState, TaskContext
+from cap_harness.contracts import (
+    ExecutionResult,
+    RobotPlanningContext,
+    RobotState,
+    SynchronizedTrajectory,
+    TaskContext,
+    Trajectory,
+)
 from cap_harness.errors import ApiError, ErrorCode
 from cap_harness.g1_real import codec
 from cap_harness.g1_real.registry import G1RealTaskRegistry
@@ -207,6 +214,86 @@ class G1RealAdapter(YamRealAdapter):
                 "max_finger_lag_rad": round(float(lag.max(initial=0.0)), 4),
             },
         )
+
+    # -- posture and leg clearance -------------------------------------------------
+
+    def _posture(self):
+        if getattr(self, "_posture_model", None) is None:
+            from cap_harness.g1_real.posture import G1Posture
+
+            hands = self._env.config.hands
+            self._posture_model = G1Posture(
+                {s: hands[s].joint_names for s in self.arms},
+                {s: hands[s].closed for s in self.arms},
+            )
+            self._posture_arms = self._posture_model.arm_qpos(
+                {s: self._env.config.arms[s].joint_names for s in self.arms}
+            )
+        return self._posture_model
+
+    def _posture_from_feedback(self) -> bool:
+        raw = self._env.body.get_observations()
+        if raw is None or "body_q" not in raw:
+            return False
+        self._posture().set_state(raw["body_q"], {s: raw[f"{s}_hand_q"] for s in self.arms})
+        return True
+
+    def get_posture(self) -> dict[str, Any]:
+        """Whole-body posture from SONIC's feedback, torso frame: shoulder, elbow, wrist,
+        palm center and normal per arm, hips, knees and ankles, and each forearm's
+        clearance to the legs. A read, not a command.
+        """
+        if not self._posture_from_feedback():
+            return {"ok": False, "error": "no SONIC feedback"}
+        return {"ok": True, **self._posture().summary()}
+
+    def _leg_guard(self, trajectory: Trajectory | SynchronizedTrajectory) -> ExecutionResult | None:
+        """Refuse a trajectory that brings a forearm or hand closer than the margin to the
+        legs, unless it moves away from them (so a tight start can still be left).
+        """
+        margin = float(self._env.config.controller.leg_clearance_m)
+        if margin <= 0.0 or not self._posture_from_feedback():
+            return None
+        if isinstance(trajectory, Trajectory):
+            rows = {self.resolve_arm(trajectory.arm): np.asarray(trajectory.joint_positions)}
+        else:
+            rows = {
+                self.resolve_arm(a): np.asarray(q) for a, q in trajectory.joint_positions.items()
+            }
+        posture = self._posture()
+        start = {side: posture.leg_clearance(side)[0] for side in rows}
+        n = len(next(iter(rows.values())))
+        for i in np.unique(np.linspace(0, n - 1, min(n, 40)).astype(int)):
+            posture.set_arms({side: q[i] for side, q in rows.items()}, self._posture_arms)
+            for side in rows:
+                clearance, arm_geom, leg_geom = posture.leg_clearance(side)
+                if clearance < margin and clearance < start[side] - 0.005:
+                    return ExecutionResult(
+                        ok=False,
+                        steps_executed=0,
+                        error=ApiError(
+                            code=ErrorCode.PLANNING_FAILED,
+                            message=(
+                                f"trajectory brings the {side} {arm_geom.removesuffix('_fit')} "
+                                f"within {clearance * 100:.1f} cm of the robot's "
+                                f"{leg_geom.removesuffix('_fit')} (minimum {margin * 100:.0f} cm); "
+                                "nothing moved"
+                            ),
+                            details={
+                                "arm": side,
+                                "leg_clearance_m": round(clearance, 4),
+                                "margin_m": margin,
+                                "waypoint": int(i),
+                            },
+                        ),
+                    )
+        return None
+
+    def execute_trajectory(
+        self, trajectory: Trajectory | SynchronizedTrajectory
+    ) -> ExecutionResult:
+        refused = self._leg_guard(trajectory)
+        return refused if refused is not None else super().execute_trajectory(trajectory)
 
     def get_hand_state(self) -> dict[str, list[float]]:
         """Measured Dex3 finger joints per hand; a read, not a command."""

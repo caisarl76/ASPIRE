@@ -78,6 +78,7 @@ def _observation(
         "left_joint_pos": q[MUJOCO_ARM_SLICES["left"]].copy(),
         "right_joint_pos": q[MUJOCO_ARM_SLICES["right"]].copy(),
         "waist": q[MUJOCO_WAIST_SLICE].copy(),
+        "body_q": q.copy(),  # all 29 body joints (legs too), MuJoCo order
         "left_joint_vel": dq[MUJOCO_ARM_SLICES["left"]].copy(),
         "right_joint_vel": dq[MUJOCO_ARM_SLICES["right"]].copy(),
         "left_hand_q": np.array(left_hand_q, dtype=np.float64),

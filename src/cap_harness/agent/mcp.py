@@ -206,8 +206,13 @@ _DIRECT_BASE = frozenset(
     }
 )
 _READ_ONLY_BASE = frozenset({"get_robot_state", "localize_object"})
-_DIRECT_EXTENSIONS = (".get_controller_metadata", ".set_hand_joints", ".get_hand_state")
-_READ_ONLY_EXTENSIONS = (".get_controller_metadata", ".get_hand_state")
+_DIRECT_EXTENSIONS = (
+    ".get_controller_metadata",
+    ".set_hand_joints",
+    ".get_hand_state",
+    ".get_posture",
+)
+_READ_ONLY_EXTENSIONS = (".get_controller_metadata", ".get_hand_state", ".get_posture")
 
 
 def _jsonable(value: Any, *, _active: set[int] | None = None) -> Any:

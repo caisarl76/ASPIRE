@@ -39,9 +39,12 @@ def adapter():
 
 
 def _right_trajectory(adapter, delta0: float, steps: int = 25) -> Trajectory:
+    """Swing the right shoulder forward by ``delta0`` (hand up, away from the legs:
+    backward from home the open thumb nears the hip and the leg guard refuses).
+    """
     state = adapter.get_robot_state()
     start = state.joint_positions["right"]
-    target = start + np.array([delta0, 0, 0, 0, 0, 0, 0])
+    target = start - np.array([delta0, 0, 0, 0, 0, 0, 0])
     return Trajectory(
         joint_positions=np.linspace(start, target, steps),
         dt_s=0.02,
