@@ -414,6 +414,15 @@ Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
    edge, and it fell to the floor when the hand opened. The agent stopped and reported
    the task incomplete. The pick recipe gives no site position for the grasp; the
    agent's site was 3-4 cm ahead of the bottle in runs 6 and 7 and 1 cm in run 8.
+9. With the grasp site in the recipe (`S = (Ax + 0.06, Ay - 0.053, z)`, staged approach
+   along +y, check after the close, lift judged by the gap): **done**. Sim truth: the
+   bottle rose 5.6 cm, never tilted past upright 0.96 and ended upright 2.9 cm from its
+   start in the world. The first two closes (site x 0.393 and 0.401, short of the
+   recipe's 0.42) pulled the bottle about 2 cm toward the robot; the agent saw that,
+   opened, backed away and re-approached each time. The third close, at x 0.42, held
+   through a 5.5 cm lift. It then put the bottle down, lifted it 3.5 cm again to move it
+   back toward its spot, set it down upright and released it. 39 tool calls, 106k
+   tokens, about 6 min; heading span 9 deg; Home unverified (0.097 / 0.075 rad).
 
 ### Sim2sim (SONIC MuJoCo loop)
 
