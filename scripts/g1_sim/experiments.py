@@ -375,7 +375,8 @@ def exp_grip(args: argparse.Namespace) -> int:
             (
                 "pre-contact pose",
                 pre.ok,
-                f"error {pre.final_errors.get('right', float('nan')) * 1000:.0f} mm",
+                f"error {pre.final_errors.get('right', float('nan')) * 1000:.0f} mm"
+                + (f" [{pre.error.code}: {pre.error.message}]" if pre.error else ""),
             )
         )
         since = time.monotonic()
@@ -393,7 +394,9 @@ def exp_grip(args: argparse.Namespace) -> int:
             (
                 "hand reaches the bottle",
                 bool(touched),
-                f"after {step * 100:.1f} cm of approach, links {sorted(touched) or 'none'}",
+                f"after {step * 100:.1f} cm of approach, links {sorted(touched) or 'none'}; "
+                f"hand {hand(env).round(3)} wanted {(site - (0.08 - step) * n).round(3)}, "
+                f"bottle {truth.position('aspire_bottle').round(3)}",
             )
         )
         # The Dex3 palm is part of the wrist-yaw link; past ~5 cm from its origin is palm.
