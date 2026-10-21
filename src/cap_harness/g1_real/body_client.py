@@ -91,6 +91,8 @@ def _observation(
 
 
 _START_AFTER_BIND_S = 1.0
+# hold_heading follows the robot instead of commanding a turn back larger than this
+_HOLD_HEADING_MAX_RAD = 0.5
 
 
 class SonicZmqBodyClient:
@@ -119,6 +121,7 @@ class SonicZmqBodyClient:
             config.feedback_host, config.feedback_port, config.feedback_topic
         )
         self._last_hand = {side: np.zeros(HAND_DOF) for side in _SIDES}
+        self._held_yaw: float | None = None
         self._lock = threading.Lock()
         self._msg: dict | None = None
         self._stamp = 0.0
@@ -147,6 +150,12 @@ class SonicZmqBodyClient:
 
     @staticmethod
     def _heading(msg: dict) -> float:
+        """The current heading in SONIC's ``facing`` frame, zero when it is unknown."""
+        heading = SonicZmqBodyClient._known_heading(msg)
+        return 0.0 if heading is None else heading
+
+    @staticmethod
+    def _known_heading(msg: dict) -> float | None:
         """Yaw that holds the current heading, in the frame SONIC reads ``facing`` in.
 
         The planner's frame has yaw zero at the heading the policy initialised
@@ -156,7 +165,8 @@ class SonicZmqBodyClient:
         yaw is in a frame the planner never sees; sent as ``facing`` it commands
         a turn by the heading the robot had at init (a 90 deg turn on engage on
         the real robot, invisible in sim where that heading is zero). Without
-        any heading telemetry the only safe answer is the planner's own zero.
+        any heading telemetry the only safe answer is the planner's own zero
+        (returned as None: unknown).
         """
 
         def yaw(key: str) -> float:
@@ -165,16 +175,40 @@ class SonicZmqBodyClient:
         if "reference_heading_quat" in msg:
             active = float(np.asarray(msg.get("planner_reference_active", 0)).reshape(-1)[0])
             if active != 1:
-                return 0.0  # planner initialising at reference yaw zero
+                return None  # planner initialising at reference yaw zero
             reference = yaw("reference_heading_quat")
         elif "init_base_quat" in msg:
             reference = yaw("init_base_quat") + float(
                 np.asarray(msg.get("delta_heading", 0.0)).reshape(-1)[0]
             )
         else:
-            return 0.0
+            return None
         delta = yaw("base_quat") - reference
         return math.atan2(math.sin(delta), math.cos(delta))
+
+    def _facing_yaw(self, msg: dict | None) -> float:
+        """The heading to command: the current one, or with ``hold_heading`` the engage one.
+
+        Sending the current heading never turns the robot back, so every turn an arm
+        reach causes becomes the new command and the heading drifts over a task
+        (20-40 deg in the sim agent runs, which swung the idle hand into the case).
+        The held heading is latched at the first known heading after ``start`` and
+        dropped whenever the heading is unknown (its frame may be re-initialising).
+        """
+        heading = None if msg is None else self._known_heading(msg)
+        if heading is None:
+            self._held_yaw = None
+            return 0.0
+        if not self._config.hold_heading:
+            return heading
+        if self._held_yaw is not None:
+            delta = heading - self._held_yaw
+            if abs(math.atan2(math.sin(delta), math.cos(delta))) > _HOLD_HEADING_MAX_RAD:
+                _log.warning("heading %.2f rad from the held one; holding the current", delta)
+                self._held_yaw = None
+        if self._held_yaw is None:
+            self._held_yaw = heading
+        return self._held_yaw
 
     def get_observations(self) -> dict[str, np.ndarray | float] | None:
         msg, stamp = self._snapshot()
@@ -212,7 +246,7 @@ class SonicZmqBodyClient:
         right_hand: np.ndarray | None,
     ) -> None:
         msg, _ = self._snapshot()
-        yaw = 0.0 if msg is None else self._heading(msg)
+        yaw = self._facing_yaw(msg)
         self._pub.send(
             build_planner_message(
                 mode=self._config.mode,
@@ -234,6 +268,7 @@ class SonicZmqBodyClient:
         wait = _START_AFTER_BIND_S - (time.monotonic() - self._bound_at)
         if wait > 0:
             time.sleep(wait)
+        self._held_yaw = None  # each engage holds the heading it starts from
         self._pub.send(build_command_message(start=True, stop=False, planner=True))
 
     def seed_hands(self, left: np.ndarray, right: np.ndarray) -> None:

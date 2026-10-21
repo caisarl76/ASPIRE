@@ -51,6 +51,8 @@ sonic:
   height: -1.0
   feedback_stale_s: 0.5
   engage_hold_s: 0.2
+  # hold the engage heading (sim-verified; real profiles stay off until tested hanging)
+  hold_heading: true
 
 controller:
   control_frequency_hz: 50

@@ -364,6 +364,19 @@ Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
    - The uncommanded left hand rested on the case (1-5 N) from the fourth move on and
      pressed it at 33 N during the final Home (left index finger base).
    - Startup Home ended unverified (residuals 0.059 / 0.057 rad against 0.03).
+6. With `sonic.hold_heading` (bottle at torso x 0.36, y -0.06): **done**, and the left hand
+   never touched the case. The body client used to send SONIC the current heading as
+   `facing` on every tick, so nothing turned the robot back and each turn an arm reach
+   caused became the new command (yaw spans 40 deg in run 4, 20 deg in run 5). The left
+   hand, whose home pose is about 6 cm from the case's near-left corner, swings about
+   5 cm per 10 deg of yaw; in run 5 Home pressed it into the case at 33 N. With
+   `hold_heading: true` the client latches the heading at engage (again on each engage,
+   dropped while the heading is unknown, and re-latched rather than commanding a turn
+   back of more than 0.5 rad). Run 5's reach sequence twice plus Home: yaw span 23 deg
+   and 4.3 deg net drift without, 11.5 deg and 0.3 deg with. Run 6 itself: yaw span
+   9.3 deg, no left-hand contact, bottle up 5.8 cm, back upright 1.5 cm from its start;
+   the first close slid again and the second held. `hold_heading` is on in `g1-sim`
+   only; enable it on a real profile after a check with the robot hanging.
 
 ### Sim2sim (SONIC MuJoCo loop)
 

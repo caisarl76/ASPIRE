@@ -113,7 +113,11 @@ async def run(args: argparse.Namespace) -> list[tuple[str, str, str]]:
                 },
             )
         )
-        details = move.get("diagnostics") or (move.get("error") or {}).get("details") or {}
+        # a failed move's diagnostics carry only the correction rounds; its error has the rest
+        details = {
+            **((move.get("error") or {}).get("details") or {}),
+            **(move.get("diagnostics") or {}),
+        }
         error = details.get("position_error_m")
         failure = move.get("error") or {}
         record(

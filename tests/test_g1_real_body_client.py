@@ -195,3 +195,46 @@ def _feedback(**fields) -> dict:
 )
 def test_facing_yaw_is_relative_to_the_planner_frame(msg, expected):
     assert SonicZmqBodyClient._heading(msg) == pytest.approx(expected, abs=1e-5)
+
+
+def _at(yaw: float) -> dict:
+    return _feedback(
+        base_quat=_quat_yaw(yaw), reference_heading_quat=_quat_yaw(0.0), planner_reference_active=[1]
+    )
+
+
+def test_hold_heading_keeps_the_engage_heading_until_the_next_engage():
+    from dataclasses import replace
+
+    client = SonicZmqBodyClient(replace(_cfg(5760), hold_heading=True))
+    try:
+        assert client._facing_yaw(_at(0.10)) == pytest.approx(0.10)  # latched
+        # an arm reach turned the torso: command the latched heading back, not the new one
+        assert client._facing_yaw(_at(-0.08)) == pytest.approx(0.10)
+        client.send_start()  # a new engage latches afresh
+        assert client._facing_yaw(_at(-0.08)) == pytest.approx(-0.08)
+    finally:
+        client.close()
+
+
+def test_hold_heading_relatches_instead_of_commanding_a_large_turn():
+    from dataclasses import replace
+
+    client = SonicZmqBodyClient(replace(_cfg(5770), hold_heading=True))
+    try:
+        client._facing_yaw(_at(0.0))
+        assert client._facing_yaw(_at(0.7)) == pytest.approx(0.7)  # past 0.5 rad: follow
+        # an unknown heading (planner re-initialising) drops the latch
+        assert client._facing_yaw(_feedback(base_quat=_quat_yaw(0.2))) == 0.0
+        assert client._facing_yaw(_at(0.3)) == pytest.approx(0.3)
+    finally:
+        client.close()
+
+
+def test_without_hold_heading_the_current_heading_is_sent():
+    client = SonicZmqBodyClient(_cfg(5780))
+    try:
+        client._facing_yaw(_at(0.10))
+        assert client._facing_yaw(_at(-0.08)) == pytest.approx(-0.08)
+    finally:
+        client.close()

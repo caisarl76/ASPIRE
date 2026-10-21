@@ -59,6 +59,7 @@ class G1SonicConfig:
     height: float
     feedback_stale_s: float
     engage_hold_s: float
+    hold_heading: bool = False  # command the engage heading, not the current one
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,6 +229,7 @@ def load_g1_station_config(
         height=float(raw_sonic["height"]),
         feedback_stale_s=_positive(raw_sonic["feedback_stale_s"], "sonic.feedback_stale_s"),
         engage_hold_s=_positive(raw_sonic["engage_hold_s"], "sonic.engage_hold_s"),
+        hold_heading=bool(raw_sonic.get("hold_heading", False)),
     )
 
     raw_controller = data["controller"]
