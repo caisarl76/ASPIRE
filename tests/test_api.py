@@ -1253,6 +1253,28 @@ def test_move_to_pose_correction_stops_on_a_stall_and_reports_rounds() -> None:
     assert len(ik.targets) == 2
 
 
+class _JumpingIK(FakeIK):
+    """Solves the first target near the start, every later one on a distant branch."""
+
+    def solve_ik(self, target_pose: Pose, robot_state: RobotState, *, arm: str = "primary"):
+        result = super().solve_ik(target_pose, robot_state, arm=arm)
+        return result if len(self.targets) == 1 else replace(result, joint_positions=np.full(7, 1.0))
+
+
+def test_move_to_pose_correction_refuses_a_jump_to_a_distant_ik_solution() -> None:
+    ik = _JumpingIK(np.full(7, 0.1))
+    api = CapApi(_BiasedPlant(ik, gain=0.6), ik_providers={"pyroki": ik})
+
+    result = api.move_to_pose(_forward_10cm(), tolerance=0.015)
+
+    # near a joint limit a few cm of correction can need a different arm configuration;
+    # sweeping there is not a correction, so the first round's result stands
+    assert not result.ok and len(ik.targets) == 2
+    assert result.error.details["position_error_m"] == pytest.approx(0.04)
+    assert result.error.details["correction_rounds"] == 0
+    assert result.error.details["correction_joint_jump_rad"] == pytest.approx(0.9)
+
+
 def test_move_to_pose_without_correction_rounds_is_single_shot() -> None:
     ik = FakeIK(np.full(7, 0.1))
     plant = _BiasedPlant(ik, gain=0.6)

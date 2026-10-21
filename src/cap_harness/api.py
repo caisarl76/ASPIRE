@@ -1321,6 +1321,10 @@ class CapApi:
         three rounds. The loop stops early on success, on a stall (a round that
         barely improves the error, which means a reach or saturation limit rather
         than bias), or once the accumulated offset hits ``_POSE_CORRECTION_MAX_OFFSET_M``.
+        A round whose IK solution lies more than ``_POSE_CORRECTION_MAX_JOINT_JUMP_RAD``
+        from the previous command is not executed: near a joint limit a few cm of
+        correction can need a different arm configuration, and sweeping the arm there
+        is not a correction.
         """
         arm = self._resolve_arm(arm)
         validation = self._motion_options(tolerance, max_steps)
@@ -1338,7 +1342,7 @@ class CapApi:
                 error=ApiError(ErrorCode.INVALID_REQUEST, str(exc)),
             )
         rounds = int(getattr(self._adapter, "pose_correction_rounds", 0))
-        result = self._execute_pose(
+        result, planned = self._execute_pose(
             target_pose, tolerance, max_steps, arm, strategy, correcting=rounds > 0
         )
         commanded = target_pose
@@ -1349,10 +1353,23 @@ class CapApi:
                 break
             errors_m.append(error_m)
             measured = self._execution_state(result).end_effector_poses[arm]
-            commanded = _corrected_pose(commanded, target_pose, measured)
-            result = self._execute_pose(
-                commanded, tolerance, max_steps, arm, strategy, goal=target_pose, correcting=True
+            corrected = _corrected_pose(commanded, target_pose, measured)
+            attempt, attempt_planned = self._execute_pose(
+                corrected,
+                tolerance,
+                max_steps,
+                arm,
+                strategy,
+                goal=target_pose,
+                correcting=True,
+                previous_joints=planned,
             )
+            jump = None if attempt.error is None else attempt.error.details.get(_JOINT_JUMP_KEY)
+            if jump is not None:
+                return _with_correction_diagnostics(
+                    result, round_index - 1, commanded, target_pose, errors_m, {_JOINT_JUMP_KEY: jump}
+                )
+            result, planned, commanded = attempt, attempt_planned, corrected
             final_m = _pose_error_m(result)
             result = _with_correction_diagnostics(
                 result, round_index, commanded, target_pose, [*errors_m, final_m]
@@ -1371,10 +1388,13 @@ class CapApi:
         strategy: MotionStrategy | None,
         goal: Pose | None = None,
         correcting: bool = False,
-    ) -> ExecutionResult:
+        previous_joints: np.ndarray | None = None,
+    ) -> tuple[ExecutionResult, np.ndarray | None]:
         """Plan to and execute ``target_pose``; verify against ``goal`` (default: the target).
 
-        With ``correcting``, an execution that only failed the adapter's joint
+        Returns the result and the plan's final joints. With ``previous_joints`` a plan
+        ending farther than ``_POSE_CORRECTION_MAX_JOINT_JUMP_RAD`` from them moves
+        nothing. With ``correcting``, an execution that only failed the adapter's joint
         residual check still gets the pose check: for a tracking controller
         that residual is the bias the correction rounds exist to remove, and
         the pose error is the criterion that decides them.
@@ -1388,7 +1408,17 @@ class CapApi:
                 strategy=strategy,
             )
             if not plan.ok or plan.trajectory is None:
-                return ExecutionResult(ok=False, steps_executed=0, error=plan.error)
+                return ExecutionResult(ok=False, steps_executed=0, error=plan.error), None
+            final_joints = np.asarray(plan.trajectory.joint_positions[-1], dtype=float)
+            if previous_joints is not None:
+                jump = float(np.max(np.abs(final_joints - previous_joints)))
+                if jump > _POSE_CORRECTION_MAX_JOINT_JUMP_RAD:
+                    error = ApiError(
+                        ErrorCode.IK_FAILED,
+                        "correction round would move to a distant IK solution",
+                        details={_JOINT_JUMP_KEY: jump},
+                    )
+                    return ExecutionResult(ok=False, steps_executed=0, error=error), None
             if len(plan.trajectory.joint_positions) > max_steps:
                 return ExecutionResult(
                     ok=False,
@@ -1401,7 +1431,7 @@ class CapApi:
                             "max_steps": max_steps,
                         },
                     ),
-                )
+                ), None
             execution = self._stage(
                 "execute_trajectory",
                 self.execute_trajectory,
@@ -1415,8 +1445,9 @@ class CapApi:
                 break
             time.sleep(_STALE_REPLAN_WAIT_S)
         if not execution.ok and not (correcting and _residual_only_failure(execution)):
-            return execution
-        return self._validate_pose_execution(execution, goal or target_pose, tolerance, arm)
+            return execution, final_joints
+        validated = self._validate_pose_execution(execution, goal or target_pose, tolerance, arm)
+        return validated, final_joints
 
     def _validate_pose_execution(
         self,
@@ -2164,6 +2195,10 @@ _STALE_REPLANS = 2  # move_to_pose re-plans this often after a stale-start refus
 _STALE_REPLAN_WAIT_S = 0.5
 _POSE_CORRECTION_MAX_OFFSET_M = 0.05  # per axis, command minus goal
 _POSE_CORRECTION_STALL_RATIO = 0.75  # a round must beat this fraction of the previous error
+# per joint, a round's IK solution vs the previous command; in the sim, ordinary corrections
+# moved joints 0.06-0.2 rad, the elbow-limit branch jumps of agent run 4 0.6-1.9 rad
+_POSE_CORRECTION_MAX_JOINT_JUMP_RAD = 0.5
+_JOINT_JUMP_KEY = "correction_joint_jump_rad"
 
 
 def _residual_only_failure(execution: ExecutionResult) -> bool:
@@ -2219,12 +2254,14 @@ def _with_correction_diagnostics(
     commanded: Pose,
     target: Pose,
     errors_m: list[float | None],
+    more: dict | None = None,
 ) -> ExecutionResult:
     extra = {
         "correction_rounds": rounds,
         "correction_offset_m": (commanded.position - target.position).tolist(),
         # position error before the first round, then after each round
         "correction_errors_m": errors_m,
+        **(more or {}),
     }
     error = result.error
     if error is not None:

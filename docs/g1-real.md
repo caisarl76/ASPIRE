@@ -339,8 +339,15 @@ Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
    yaw, the uncommanded left hand struck the case (up to 58 N), and the right hand
    finished over the head (z 0.48). Home was then refused, because the retreat IK put the
    right wrist pitch at the model limit (-1.61443), just past the profile's -1.6144.
-   Retreat rows are now clipped to the profile limits. The diverging correction round is
-   not yet explained. The bottle stayed upright but slid 5 cm. SAM3 returned a 0.22 m
+   Retreat rows are now clipped to the profile limits. The correction round diverged
+   because the staging target sits at the right elbow's limit (-1.047), where mink's
+   solution is very sensitive: the round's 2.6 cm and 9 deg re-command moved the
+   solution 1.6 rad (shoulder pitch 1.0 to 2.6), whatever the seed. `move_to_pose` now
+   refuses a correction round whose IK solution is more than 0.5 rad from the previous
+   command and returns the earlier round's result with `correction_joint_jump_rad`.
+   Replayed in the sim: run 4's staging (jump 1.54 rad) and the grip staging pose
+   (0.59 rad) stop after the first round at 2-3 cm; ordinary rounds (5 cm up, 3 cm
+   forward, hand turned -30 and -45 deg) moved joints 0.06-0.2 rad and still ran. The bottle stayed upright but slid 5 cm. SAM3 returned a 0.22 m
    box (score 0.04) that the recipe says to reject; the agent never used it.
 
 ### Sim2sim (SONIC MuJoCo loop)
