@@ -4,8 +4,10 @@
 #   scripts/g1_sim.sh up      start the sim (headless, RGB-D on 5565) and the SONIC deploy
 #                             (command 5566, feedback 5567); waits for both
 #   scripts/g1_sim.sh drop    toggle the elastic band (drop the robot after engage)
-#   scripts/g1_sim.sh reset   place the case and the bottle in front of the robot as it
-#                             stands now (do this after drop; it steps when it lands)
+#   scripts/g1_sim.sh reset [X Y]
+#                             place the case and the bottle in front of the robot as it
+#                             stands now (do this after drop; it steps when it lands);
+#                             X Y puts the bottle there in the torso frame (default 0.36 -0.06)
 #   scripts/g1_sim.sh status  sessions, ports, last log lines
 #   scripts/g1_sim.sh down    stop everything this script started
 #   scripts/g1_sim.sh smoke [--keep]
@@ -15,7 +17,8 @@
 # Then, for an agent session: scripts/start_system2.sh --robot sim --allow-motion --engage
 # (MCP 8223, viewer 8083), scripts/g1_sim.sh drop, scripts/start_system2_agent.sh --robot sim
 # --allow-motion. The sim ports never overlap a real-robot server (5555-5557, 8222).
-# Overrides: GR00T_WBC_ROOT, TensorRT_ROOT, G1_SIM_CHECKPOINT (sonic_v1_1 or release).
+# Overrides: GR00T_WBC_ROOT, TensorRT_ROOT, G1_SIM_CHECKPOINT (sonic_v1_1 or release),
+# G1_SIM_YAW_DEG (the robot's initial heading).
 set -euo pipefail
 ASPIRE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 WBC_ROOT="${GR00T_WBC_ROOT:-$HOME/work/GR00T-WholeBodyControl}"
@@ -50,7 +53,8 @@ up() {
   # has even truncated its log.
   rm -f "$RUN_DIR"/{sim,deploy,cap}.log "$RUN_DIR/sim.pid"
   tmux new-session -d -s "$SIM" "cd '$WBC_ROOT' && MUJOCO_GL=egl PYTHONPATH= exec .venv_sim/bin/python \
-'$ASPIRE_ROOT/scripts/g1_sim/sim_rgbd.py' --port $CAMERA_PORT --pid-file '$RUN_DIR/sim.pid' > '$RUN_DIR/sim.log' 2>&1"
+'$ASPIRE_ROOT/scripts/g1_sim/sim_rgbd.py' --port $CAMERA_PORT --pid-file '$RUN_DIR/sim.pid' \
+--layout-file '$RUN_DIR/layout.json' --yaw-deg ${G1_SIM_YAW_DEG:-0} > '$RUN_DIR/sim.log' 2>&1"
   wait_for 60 "the sim camera on $CAMERA_PORT" port_bound "$CAMERA_PORT"
   local policy="policy/$CHECKPOINT"
   tmux new-session -d -s "$DEPLOY" "cd '$WBC_ROOT/gear_sonic_deploy' && export TensorRT_ROOT='$TRT_ROOT' \
@@ -69,6 +73,8 @@ down() {
     if running "$session"; then tmux kill-session -t "$session"; fi
   done
   rm -f "$RUN_DIR/sim.pid"
+  ports_free() { ! port_bound $CAMERA_PORT && ! port_bound $FEEDBACK_PORT && ! port_bound $MCP_PORT; }
+  wait_for 20 "the sim ports to close" ports_free
   printf 'sim down\n'
 }
 
@@ -112,9 +118,12 @@ smoke() {
 case "${1:-}" in
   up) up ;;
   drop) sim_signal USR1 ;;
-  reset) sim_signal USR2 ;;
+  reset)
+    if (($# == 3)); then printf '{"bottle_xy": [%s, %s]}\n' "$2" "$3" > "$RUN_DIR/layout.json"
+    else rm -f "$RUN_DIR/layout.json"; fi
+    sim_signal USR2 ;;
   down) down ;;
   status) status ;;
   smoke) shift; smoke "$@" ;;
-  *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

@@ -29,7 +29,9 @@ GRIP_STEP = 0.05
 GRIP_SETTLE_S = 0.15
 GRIP_CONTACT_LAG_RAD = 0.15  # per moving joint
 GRIP_CONTACT_JOINTS = 2  # blocked joints that count as contact
-GRIP_SQUEEZE = 0.08  # closure added past the contact point: a firm, not crushing, hold
+GRIP_SQUEEZE = (
+    0.15  # closure past the contact point; in sim 0.08 let a 0.5 kg bottle slip, 0.15 lifts it
+)
 
 
 class G1RealAdapter(YamRealAdapter):

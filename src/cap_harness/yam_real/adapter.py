@@ -852,6 +852,12 @@ class YamRealAdapter:
             final_observation=observation,
             diagnostics={
                 "source": str(result.get("source", "cap_home")),
+                # G1: Cartesian waypoints spent lifting a raised hand clear before Home
+                **(
+                    {"retreat_waypoints": int(result["retreat_waypoints"])}
+                    if "retreat_waypoints" in result
+                    else {}
+                ),
                 "joint_residual_rad": residuals,
                 "home_tolerance_rad": HOME_DIAGNOSTIC_TOLERANCE_RAD,
                 "home_verified": max(residuals.values()) <= HOME_DIAGNOSTIC_TOLERANCE_RAD,

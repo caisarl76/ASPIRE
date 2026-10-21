@@ -15,13 +15,16 @@ The head camera is moved to the real D435 mounting and field of view (the transf
 from the g1-lab station profile), so the g1-sim profile shares the real camera transform.
 Frames go out on tcp://*:<port> in the composed-camera schema ASPIRE's G1 camera client
 reads: ``ego_view`` RGB, ``ego_view_depth`` uint16 millimetres, ``intrinsics``. Each
-message also carries ``sim_truth`` (object poses in the torso frame) for checking
-localization; ASPIRE ignores it.
+message also carries ``sim_truth`` for checking runs; ASPIRE ignores it: object positions
+in the torso frame, and per object the robot links that touched it since the previous
+message as ``[peak normal force, x, y, z]`` with the contact point in the link's frame
+(contacts are collected on every physics step).
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 from pathlib import Path
@@ -59,20 +62,23 @@ def _camera_pose() -> tuple[np.ndarray, np.ndarray]:
     return t[:3, 3], quat
 
 
-def build_model(path: str, *, objects: bool) -> mujoco.MjModel:
+def build_model(path: str, *, objects: bool, yaw_deg: float = 0.0) -> mujoco.MjModel:
     """The fork's scene with the real camera (and the objects), loaded from an XML file.
 
     The fork's simulator calls ``mj_saveLastXML``, which needs a model loaded from XML,
     so the edited spec is written to a temporary file (asset dirs made absolute) and
     loaded from there.
     """
-    spec = mujoco.MjSpec.from_file(path)
+    spec = mujoco.MjSpec.from_file(str(Path(path).resolve()))
     camera = spec.camera("head_camera")
     camera.pos, camera.quat = _camera_pose()
     camera.fovy = math.degrees(2.0 * math.atan(HEIGHT / 2.0 / REAL_FY_PX))
+    if yaw_deg:  # start facing elsewhere (the real robot's heading at init is not zero)
+        half = math.radians(yaw_deg) / 2.0
+        spec.body("pelvis").quat = [math.cos(half), 0.0, 0.0, math.sin(half)]
     if objects:
         _add_objects(spec)
-    base = Path(path).parent
+    base = Path(path).resolve().parent
     for attr in ("meshdir", "texturedir"):
         value = getattr(spec, attr)
         if value and not os.path.isabs(value):
@@ -88,13 +94,25 @@ def _add_objects(spec: mujoco.MjSpec) -> None:
     probe = spec.compile()
     data = mujoco.MjData(probe)
     mujoco.mj_forward(probe, data)
-    tx, ty, tz = data.xpos[probe.body("torso_link").id]
+    torso = probe.body("torso_link").id
+    tx, ty, tz = data.xpos[torso]
+    fx, fy = data.xmat[torso].reshape(3, 3)[:2, 0]
+    yaw = math.atan2(fy, fx)
+
+    def ahead(x: float, y: float) -> list[float]:
+        return [
+            tx + math.cos(yaw) * x - math.sin(yaw) * y,
+            ty + math.sin(yaw) * x + math.cos(yaw) * y,
+        ]
+
+    upright = [math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)]
     world = spec.worldbody
     # A mocap body: immovable by contact, but re-placeable at runtime (reset).
     case = world.add_body(
         name="aspire_case",
         mocap=True,
-        pos=[tx + CASE_NEAR_X + CASE_DEPTH / 2, ty + sum(CASE_Y) / 2, tz / 2],
+        pos=[*ahead(CASE_NEAR_X + CASE_DEPTH / 2, sum(CASE_Y) / 2), tz / 2],
+        quat=upright,
     )
     case.add_geom(
         name="aspire_case_box",
@@ -103,7 +121,7 @@ def _add_objects(spec: mujoco.MjSpec) -> None:
         rgba=[0.06, 0.06, 0.07, 1.0],
     )
     bottle = world.add_body(
-        name="aspire_bottle", pos=[tx + BOTTLE_XY[0], ty + BOTTLE_XY[1], tz + 0.075]
+        name="aspire_bottle", pos=[*ahead(*BOTTLE_XY), tz + 0.075], quat=upright
     )
     bottle.add_freejoint(name="aspire_bottle_free")
     clear = [0.78, 0.88, 0.96, 1.0]
@@ -123,10 +141,53 @@ def _add_objects(spec: mujoco.MjSpec) -> None:
         )
 
 
+class ContactLog:
+    """Robot links touching each object, collected on every physics step."""
+
+    def __init__(self) -> None:
+        self._objects: dict[int, str] | None = None
+        self._force = np.zeros(6)
+        self.touches: dict[str, dict[str, float]] = {}
+
+    def collect(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
+        if self._objects is None:
+            self._objects = {
+                g: name
+                for name in ("aspire_case", "aspire_bottle")
+                if (b := mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)) >= 0
+                for g in range(model.ngeom)
+                if model.geom_bodyid[g] == b
+            }
+        for i in range(data.ncon):
+            contact = data.contact[i]
+            pair = (contact.geom1, contact.geom2)
+            hit = [self._objects.get(g) for g in pair]
+            if hit[0] is None and hit[1] is None:
+                continue
+            obj, other = (hit[0], pair[1]) if hit[0] is not None else (hit[1], pair[0])
+            body = model.geom_bodyid[other]
+            if body == 0 or other in self._objects:  # floor / the other object
+                continue
+            mujoco.mj_contactForce(model, data, i, self._force)
+            link = model.body(body).name
+            force = round(float(abs(self._force[0])), 2)
+            peak = self.touches.setdefault(obj, {})
+            if force >= peak.get(link, (0.0,))[0]:
+                # where on the link: the contact point in the link's own frame
+                local = data.xmat[body].reshape(3, 3).T @ (contact.pos - data.xpos[body])
+                peak[link] = (force, *np.round(local, 3).tolist())
+
+    def drain(self) -> dict[str, dict[str, float]]:
+        touches, self.touches = self.touches, {}
+        return touches
+
+
 class RgbdPublisher:
     """Renders the head camera (RGB and depth) and publishes ASPIRE's camera schema."""
 
-    def __init__(self, port: int) -> None:
+    def __init__(self, port: int, contacts: ContactLog, layout_file: Path | None) -> None:
+        self._contacts = contacts
+        self._layout_file = layout_file
         self._sock = zmq.Context.instance().socket(zmq.PUB)
         self._sock.setsockopt(zmq.SNDHWM, 3)
         self._sock.bind(f"tcp://*:{port}")
@@ -138,11 +199,17 @@ class RgbdPublisher:
         }  # fmt: skip
 
     reset_requested = False
+    band_on = staticmethod(lambda: None)  # set once the simulator exists
 
     def publish(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
         if self.reset_requested:  # applied here, in the simulation thread
             self.reset_requested = False
-            _place_objects(model, data)
+            bottle_xy = BOTTLE_XY
+            if self._layout_file is not None and self._layout_file.exists():
+                bottle_xy = tuple(
+                    json.loads(self._layout_file.read_text()).get("bottle_xy", BOTTLE_XY)
+                )
+            _place_objects(model, data, bottle_xy)
         if self._rgb is None:  # GL contexts belong to the rendering thread
             self._rgb = mujoco.Renderer(model, HEIGHT, WIDTH)
             self._depth = mujoco.Renderer(model, HEIGHT, WIDTH)
@@ -156,12 +223,18 @@ class RgbdPublisher:
             "timestamps": {"ego_view": time.time()},
             "images": {"ego_view": rgb, "ego_view_depth": depth_mm},
             "intrinsics": {"ego_view": self._intrinsics},
-            "sim_truth": _truth(model, data),
+            "sim_truth": {
+                **_truth(model, data),
+                "contacts": self._contacts.drain(),
+                "band": self.band_on(),
+            },
         }
         self._sock.send(msgpack.packb(message, default=msgpack_numpy.encode, use_bin_type=True))
 
 
-def _place_objects(model: mujoco.MjModel, data: mujoco.MjData) -> None:
+def _place_objects(
+    model: mujoco.MjModel, data: mujoco.MjData, bottle_xy: tuple[float, float] = BOTTLE_XY
+) -> None:
     """The case and the upright bottle at their layout relative to the torso's current pose."""
     case = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "aspire_case")
     joint = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "aspire_bottle_free")
@@ -182,11 +255,12 @@ def _place_objects(model: mujoco.MjModel, data: mujoco.MjData) -> None:
     data.mocap_pos[mocap] = [*ahead(CASE_NEAR_X + CASE_DEPTH / 2, sum(CASE_Y) / 2), half_height]
     data.mocap_quat[mocap] = upright
     qpos, dof = model.jnt_qposadr[joint], model.jnt_dofadr[joint]
-    data.qpos[qpos : qpos + 3] = [*ahead(*BOTTLE_XY), 2 * half_height + 0.076]
+    data.qpos[qpos : qpos + 3] = [*ahead(*bottle_xy), 2 * half_height + 0.076]
     data.qpos[qpos + 3 : qpos + 7] = upright
     data.qvel[dof : dof + 6] = 0.0
     print(
-        f"[g1-sim] case and bottle placed in front of the robot (yaw {math.degrees(yaw):+.1f} deg)",
+        f"[g1-sim] case and bottle placed in front of the robot (yaw {math.degrees(yaw):+.1f} deg, "
+        f"bottle at {bottle_xy})",
         flush=True,
     )
 
@@ -211,6 +285,10 @@ def main() -> None:
     parser.add_argument("--fps", type=float, default=15.0)
     parser.add_argument("--no-objects", action="store_true", help="robot only, no case or bottle")
     parser.add_argument("--pid-file", type=Path)
+    parser.add_argument("--yaw-deg", type=float, default=0.0, help="initial heading of the robot")
+    parser.add_argument(
+        "--layout-file", type=Path, help='JSON {"bottle_xy": [x, y]} (torso frame) read on reset'
+    )
     args = parser.parse_args()
 
     from gear_sonic.utils.mujoco_sim import base_sim
@@ -219,14 +297,43 @@ def main() -> None:
 
     # Swap the scene: base_sim loads it with mujoco.MjModel.from_xml_path.
     loader = types.SimpleNamespace(
-        from_xml_path=lambda path: build_model(path, objects=not args.no_objects)
+        from_xml_path=lambda path: build_model(
+            path, objects=not args.no_objects, yaw_deg=args.yaw_deg
+        )
     )
     proxy = types.ModuleType("mujoco")
     proxy.__dict__.update(mujoco.__dict__)
     proxy.MjModel = loader
     base_sim.mujoco = proxy
 
-    publisher = RgbdPublisher(args.port)
+    if args.yaw_deg:
+        # The elastic band springs the torso's orientation toward identity, which would
+        # turn the hanging robot back to yaw 0 before engage; aim it at the start heading.
+        from gear_sonic.utils.mujoco_sim import unitree_sdk2py_bridge as bridge
+        from scipy.spatial.transform import Rotation
+
+        to_start = Rotation.from_euler("z", args.yaw_deg, degrees=True).inv()
+        advance = bridge.ElasticBand.Advance
+
+        def advance_toward_start(band: object, pose: np.ndarray) -> np.ndarray:
+            pose = np.array(pose, dtype=float)
+            w, x, y, z = pose[3:7]
+            # error in the world frame (the band's torque is a world-frame torque)
+            qx, qy, qz, qw = (Rotation.from_quat([x, y, z, w]) * to_start).as_quat()
+            pose[3:7] = [qw, qx, qy, qz]
+            return advance(band, pose)
+
+        bridge.ElasticBand.Advance = advance_toward_start
+
+    contacts = ContactLog()
+    step = base_sim.DefaultEnv.sim_step
+
+    def sim_step(env: object) -> None:
+        step(env)
+        contacts.collect(env.mj_model, env.mj_data)
+
+    base_sim.DefaultEnv.sim_step = sim_step
+    publisher = RgbdPublisher(args.port, contacts, args.layout_file)
     base_sim.DefaultEnv.update_render_caches = lambda env: publisher.publish(
         env.mj_model, env.mj_data
     )
@@ -240,6 +347,10 @@ def main() -> None:
         onscreen=False,
         offscreen=False,
         enable_image_publish=False,
+    )
+
+    publisher.band_on = lambda: bool(
+        getattr(getattr(sim.sim_env, "elastic_band", None), "enable", False)
     )
 
     def toggle_band(*_: object) -> None:

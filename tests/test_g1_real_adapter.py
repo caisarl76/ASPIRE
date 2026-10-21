@@ -327,7 +327,9 @@ def test_close_gripper_stops_at_contact_and_squeezes_lightly(monkeypatch):
         result = adapter.close_gripper(arm="right")
         assert result.ok and result.diagnostics["contact"] is True
         # stopped near where the fingers met the object, plus the light squeeze
-        assert 0.4 < result.diagnostics["closure"] <= 0.4 + 0.08 + 0.05 + 1e-9
+        from cap_harness.g1_real.adapter import GRIP_SQUEEZE, GRIP_STEP
+
+        assert 0.4 < result.diagnostics["closure"] <= 0.4 + GRIP_SQUEEZE + GRIP_STEP + 1e-9
         _, _, right_hand = adapter.native_env.last_command()
         assert codec.hand_scalar(right_hand, hand.open, hand.closed) == pytest.approx(
             result.diagnostics["gripper_position"]
