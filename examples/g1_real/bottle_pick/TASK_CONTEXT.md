@@ -28,6 +28,8 @@ robot rather than forcing a pose.
    closed on nothing; open with `cap_open_gripper` and correct the approach. For a
    different finger shape use `cap_g1_real__set_hand_joints` (seven radians, Dex3
    order, at most 0.25 rad per message). Finger closure alone is not a grasp.
+   Near contact the hand hides the bottle from `ego_view`; judge the grasp from an
+   extra view (`third_view`) when the station has one.
 4. Lift a few centimetres. Verify the bottle follows from the returned image and the
    wrist joint change; a closure value or successful motion is not proof.
 5. Move to the place spot, lower in bounded steps, open the hand with

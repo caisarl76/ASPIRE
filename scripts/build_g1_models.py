@@ -1,6 +1,6 @@
 r"""Derive ASPIRE's torso-rooted G1 kinematic models from the GR00T-WholeBodyControl fork.
 
-Two outputs, both mesh-free so they need no mesh directory:
+Three outputs, all mesh-free so they need no mesh directory:
 
 * ``g1_upper_body.xml``: the SONIC MuJoCo full body with the pelvis freejoint and
   both leg subtrees removed, every mesh geom and mesh asset dropped, and a
@@ -9,6 +9,10 @@ Two outputs, both mesh-free so they need no mesh directory:
   is simulated on it.
 * ``g1_dual_arm.urdf``: the fork's dual-arm URDF with mesh visuals/collisions
   stripped and a fixed ``{side}_grasp`` link at the same offset as the site.
+* ``g1_full_body.xml``: the whole body, legs and hands included, pelvis fixed, with
+  every mesh replaced by a fitted primitive (a capsule for an elongated mesh, a box
+  otherwise) and the grasp sites. For posture and clearance queries
+  (``g1_real/posture.py``), not for simulation.
 
 Usage:
     python scripts/build_g1_models.py --fork ~/work/GR00T-WholeBodyControl \\
@@ -71,6 +75,84 @@ def build_mjcf(source: Path) -> str:
     return _provenance(MJCF_SRC) + ET.tostring(root, encoding="unicode") + "\n"
 
 
+def _fit_primitive(vertices) -> dict[str, str]:
+    """A capsule along the principal axis of an elongated mesh, else an oriented box.
+
+    Percentile extents (2-98) keep a few stray vertices from inflating the shape.
+    """
+    import mujoco
+    import numpy as np
+
+    center = vertices.mean(axis=0)
+    _, _, axes = np.linalg.svd(vertices - center, full_matrices=False)
+    local = (vertices - center) @ axes.T
+    low, high = np.percentile(local, 2, axis=0), np.percentile(local, 98, axis=0)
+    extents = high - low
+    mid = center + axes.T @ ((low + high) / 2)
+    fmt = lambda v: " ".join(f"{x:.4f}" for x in v)
+    if extents[0] > 1.6 * extents[1]:
+        radius = float(np.percentile(np.linalg.norm(local[:, 1:], axis=1), 90))
+        half = max(extents[0] / 2 - radius, 1e-3)
+        ends = (mid - axes[0] * half, mid + axes[0] * half)
+        return {"type": "capsule", "fromto": fmt([*ends[0], *ends[1]]), "size": f"{radius:.4f}"}
+    rotation = axes.T if np.linalg.det(axes.T) > 0 else axes.T * [1, 1, -1]
+    quat = np.zeros(4)
+    mujoco.mju_mat2Quat(quat, rotation.ravel())
+    return {"type": "box", "pos": fmt(mid), "quat": fmt(quat), "size": fmt(extents / 2)}
+
+
+def build_full_body(source: Path) -> str:
+    import mujoco
+    import numpy as np
+
+    model = mujoco.MjModel.from_xml_path(str(source))
+    fits: dict[str, list[dict[str, str]]] = {}
+    for g in range(model.ngeom):
+        if model.geom_type[g] != mujoco.mjtGeom.mjGEOM_MESH:
+            continue
+        mesh = model.geom_dataid[g]
+        start, count = model.mesh_vertadr[mesh], model.mesh_vertnum[mesh]
+        rotation = np.zeros(9)
+        mujoco.mju_quat2Mat(rotation, model.geom_quat[g])
+        vertices = (
+            model.mesh_vert[start : start + count] @ rotation.reshape(3, 3).T + model.geom_pos[g]
+        )
+        body = model.body(model.geom_bodyid[g]).name
+        fits.setdefault(body, []).append(_fit_primitive(vertices))
+
+    root = ET.parse(source).getroot()
+    _remove(root, [j for j in root.iter("joint") if j.get("type") == "free"])
+    _remove(root, [g for g in root.iter("geom") if g.get("type") == "mesh"])
+    _remove(root, list(root.iter("mesh")))
+    _remove(root, [s for s in root if s.tag in ("actuator", "sensor", "contact", "equality")])
+    for asset in root.findall("asset"):
+        if len(asset) == 0:
+            root.remove(asset)
+    bodies = {b.get("name"): b for b in root.iter("body")}
+    for body, shapes in fits.items():
+        # one primitive per body (the largest): visual and collision meshes of a link
+        # are the same shape, and duplicates would only slow the distance queries
+        volume = lambda f: (
+            np.prod([float(x) for x in f["size"].split()])
+            if f["type"] == "box"
+            else float(f["size"]) ** 2 * 3
+        )
+        best = max(shapes, key=volume)
+        ET.SubElement(
+            bodies[body], "geom", name=f"{body}_fit", contype="0", conaffinity="0", **best
+        )
+    for side in SIDES:
+        ET.SubElement(
+            bodies[f"{side}_wrist_yaw_link"],
+            "site",
+            name=f"{side}_grasp_site",
+            pos=GRASP_XYZ,
+            quat="1 0 0 0",
+        )
+    ET.indent(root)
+    return _provenance(MJCF_SRC) + ET.tostring(root, encoding="unicode") + "\n"
+
+
 def build_urdf(source: Path) -> str:
     root = ET.parse(source).getroot()
 
@@ -104,6 +186,7 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "g1_upper_body.xml").write_text(build_mjcf(args.fork / MJCF_SRC))
     (args.out / "g1_dual_arm.urdf").write_text(build_urdf(args.fork / URDF_SRC))
+    (args.out / "g1_full_body.xml").write_text(build_full_body(args.fork / MJCF_SRC))
 
 
 if __name__ == "__main__":

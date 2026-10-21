@@ -86,6 +86,8 @@ camera:
   # and the case top are within ~0.1 m of it). Fitted per frame, since SONIC's
   # stance tilts the floor a degree or two in the torso frame.
   floor_below_z_m: -0.5
+  # The sim's fixed third-person camera (ahead and to the right of the robot), image only.
+  aux_roles: [third_view]
   # T_torso_from_optical: d435_joint of g1_dual_arm.urdf (fixed child of torso_link,
   # xyz 0.0576235 0.01753 0.41987, rpy 0 0.8307767239493009 0) times the body-to-optical
   # rotation rpy (-pi/2, 0, -pi/2), so the frame is Z forward, X right, Y down.

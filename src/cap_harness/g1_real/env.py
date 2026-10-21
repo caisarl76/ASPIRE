@@ -149,22 +149,26 @@ class G1Env:
     def read_camera(self) -> Any | None:
         return None if self._camera is None else self._camera.read()
 
-    def read_aux_camera(self, role: str) -> Any | None:
-        del role  # no image-only cameras on this station
-        return None
-
     @property
     def aux_camera_roles(self) -> tuple[str, ...]:
-        return ()
+        """Image-only extra cameras (``camera.aux_roles``) the camera client delivers."""
+        if self._camera is None or not hasattr(self._camera, "read_aux"):
+            return ()
+        return tuple(self.config.camera.aux_roles)
+
+    def read_aux_camera(self, role: str) -> Any | None:
+        return self._camera.read_aux(role) if role in self.aux_camera_roles else None
 
     @property
     def camera_aliases(self) -> tuple[str, ...]:
-        return () if self._camera is None else (str(self.config.camera.role),)
+        if self._camera is None:
+            return ()
+        return (str(self.config.camera.role), *self.aux_camera_roles)
 
     def camera_frame(self, alias: str) -> Any | None:
         if self._camera is not None and alias == str(self.config.camera.role):
             return self._camera.read()
-        return None
+        return self.read_aux_camera(alias)
 
     def render_rgb(self, alias: str) -> np.ndarray | None:
         frame = self.camera_frame(alias)

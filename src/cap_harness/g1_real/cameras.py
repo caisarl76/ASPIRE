@@ -123,8 +123,11 @@ class ComposedCameraRgbd:
         depth_scale_m: float = 0.001,
         base_from_camera: np.ndarray | None = None,
         floor_below_z_m: float | None = None,
+        aux_roles: tuple[str, ...] = (),
     ):
         self._role = role
+        self._aux_roles = tuple(aux_roles)
+        self._aux: dict[str, CameraFrame] = {}
         self._depth_scale_m = depth_scale_m
         # ponytail: the floor is refit on every frame (~30 ms); reuse a plane
         # across frames if the camera thread ever falls behind the stream.
@@ -161,8 +164,10 @@ class ComposedCameraRgbd:
                 # A bad message is dropped; the previous good frame stays.
                 logger.warning("dropping undecodable camera message: %r", exc)
                 continue
+            aux = self._assemble_aux(msg, frame.timestamp_s)
             with self._lock:
                 self._frame = frame
+                self._aux.update(aux)
                 self.depth_missing = depth_missing
                 self.intrinsics_missing = intrinsics_missing
 
@@ -216,9 +221,39 @@ class ComposedCameraRgbd:
         frame = CameraFrame(rgb=rgb, depth_m=depth_m, intrinsics=k, timestamp_s=received_s)
         return frame, not bool(np.any(depth_m > 0.0)), intr is None
 
+    def _assemble_aux(self, msg: dict[str, Any], received_s: float) -> dict[str, CameraFrame]:
+        """Image-only frames for the extra roles present in this message (RGB only)."""
+        frames = {}
+        for role in self._aux_roles:
+            if role not in msg["images"]:
+                continue
+            try:
+                rgb = _decode_rgb(msg["images"][role])
+            except Exception as exc:  # a bad extra image must not cost the main frame
+                self._warn_once(f"aux_{role}", f"undecodable {role} image: {exc!r}")
+                continue
+            h, w = rgb.shape[:2]
+            intr = msg.get("intrinsics", {}).get(role)
+            k = (
+                np.array(
+                    [[intr["fx"], 0, intr["ppx"]], [0, intr["fy"], intr["ppy"]], [0, 0, 1]],
+                    np.float64,
+                )
+                if intr
+                else np.array([[1, 0, w / 2], [0, 1, h / 2], [0, 0, 1]], np.float64)
+            )
+            frames[role] = CameraFrame(
+                rgb=rgb, depth_m=np.zeros((h, w)), intrinsics=k, timestamp_s=received_s
+            )
+        return frames
+
     def read(self) -> CameraFrame | None:
         with self._lock:
             return self._frame
+
+    def read_aux(self, role: str) -> CameraFrame | None:
+        with self._lock:
+            return self._aux.get(role)
 
     def close(self) -> None:
         self._stop.set()

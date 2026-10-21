@@ -12,6 +12,7 @@ the sim's own truth: object positions and robot-object contacts in every camera 
   grip      palm to the bottle, contact-aware close, lift 5 cm, put back, open
   outage    feedback cut for 2 s while SONIC runs, then resume and re-engage
   curobo    cuRobo planning with the live depth scene: over the case and back
+  watch     record the sim's truth to a JSONL file (for agent runs); --summary reads one
 """
 
 from __future__ import annotations
@@ -575,13 +576,68 @@ def exp_curobo(args: argparse.Namespace) -> int:
         adapter.close()
 
 
+def exp_watch(args: argparse.Namespace) -> int:
+    """Record every truth message until interrupted (or --seconds), then summarize."""
+    import json
+
+    out = Path(args.out)
+    if not args.summary:
+        sock = zmq.Context.instance().socket(zmq.SUB)
+        sock.setsockopt(zmq.RCVTIMEO, 500)
+        sock.subscribe(b"")
+        sock.connect(f"tcp://127.0.0.1:{args.camera_port}")
+        deadline = time.monotonic() + args.seconds
+        with out.open("w") as stream:
+            try:
+                while time.monotonic() < deadline:
+                    try:
+                        message = msgpack.unpackb(
+                            sock.recv(), object_hook=msgpack_numpy.decode, raw=False
+                        )
+                    except zmq.Again:
+                        continue
+                    stream.write(
+                        json.dumps({"t": time.time(), **message.get("sim_truth", {})}) + "\n"
+                    )
+                    stream.flush()
+            except KeyboardInterrupt:
+                pass
+    rows = [json.loads(line) for line in out.read_text().splitlines() if line.strip()]
+    bottle = np.array([r["aspire_bottle"] for r in rows if "aspire_bottle" in r])
+    upright = [r.get("aspire_bottle_upright", 1.0) for r in rows]
+    contacts: dict[str, dict[str, float]] = {}
+    for r in rows:
+        for obj, links in r.get("contacts", {}).items():
+            for link, hit in links.items():
+                contacts.setdefault(obj, {})[link] = max(
+                    contacts.get(obj, {}).get(link, 0.0), hit[0]
+                )
+    start_z = float(np.median(bottle[:15, 2]))
+    print(f"{len(rows)} messages over {rows[-1]['t'] - rows[0]['t']:.0f} s")
+    print(
+        f"bottle: highest {(bottle[:, 2].max() - start_z) * 100:+.1f} cm above its start, "
+        f"ends {(bottle[-1] - bottle[0]) * 100} cm from its start (torso frame), "
+        f"min upright {min(upright):.2f}, final upright {upright[-1]:.2f}"
+    )
+    for obj, links in contacts.items():
+        print(
+            f"contacts with {obj}: " + ", ".join(f"{k} {v:.0f} N" for k, v in sorted(links.items()))
+        )
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument(
-        "experiment", choices=["engage", "heading", "retreat", "grip", "outage", "curobo"]
+        "experiment", choices=["engage", "heading", "retreat", "grip", "outage", "curobo", "watch"]
     )
+    parser.add_argument(
+        "--out", default="/tmp/aspire-g1-sim-watch.jsonl", help="watch: the JSONL file"
+    )
+    parser.add_argument("--seconds", type=float, default=3600.0, help="watch: stop after this long")
+    parser.add_argument("--summary", action="store_true", help="watch: only summarize --out")
     parser.add_argument("--camera-port", type=int, default=5565)
     parser.add_argument("--curobo-url", default="http://192.168.75.174:8118")
     parser.add_argument(

@@ -210,3 +210,24 @@ def test_no_floor_in_view_drops_nothing():
     k = np.array([[60.0, 0, 32], [0, 60.0, 24], [0, 0, 1]])
     depth = np.full((48, 64), 0.5)  # everything near the camera, nothing low
     assert np.array_equal(drop_floor(depth, k, T, below_z_m=-0.5), depth)
+
+
+def test_image_only_extra_camera_is_read_from_the_same_message():
+    cam = ComposedCameraRgbd("127.0.0.1", 5737, aux_roles=("third_view",))
+    pub = _publish(
+        5737,
+        {
+            "images": {
+                "ego_view": np.zeros((4, 4, 3), np.uint8),
+                "third_view": np.full((6, 8, 3), 90, np.uint8),
+            },
+            "intrinsics": {"ego_view": INTR},
+        },
+    )
+    assert _read(cam) is not None
+    aux = cam.read_aux("third_view")
+    assert aux is not None and aux.rgb.shape == (6, 8, 3) and np.all(aux.rgb == 90)
+    assert not np.any(aux.depth_m)  # image only
+    assert cam.read_aux("missing") is None
+    cam.close()
+    pub.close()

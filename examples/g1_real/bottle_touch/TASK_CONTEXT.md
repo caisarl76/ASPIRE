@@ -65,7 +65,10 @@ reaches farther; it touches the bottle's rear-right side instead of its right si
    operator to move the bottle only after all of these are refused.
 5. Approach along `+n` with steps of at most 2 cm toward `S`, and look (`observe`)
    after each step. Stop at the first step where the image shows the palm on the
-   bottle or the bottle moving. Never push past contact.
+   bottle or the bottle moving. Never push past contact. Near contact the hand hides
+   the bottle from `ego_view`: judge contact from an extra view (`third_view`) when
+   the station has one, and if neither view shows it, stop and say so rather than
+   keep stepping (a sim run pushed the bottle off the case that way).
    The palm is the flat inner face 7 to 15 cm from the wrist joint. If the wrist or
    forearm reaches the bottle first, the hand is too far forward: retract along `-n`,
    shift the contact target 5 cm back along `-f`, and approach again. On Dex3, if

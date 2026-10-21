@@ -133,6 +133,11 @@ Applies when the capability graph shows `g1_real` (operator runbook: `docs/g1-re
   sits below the work surface next to it, and cuRobo refuses that narrow start (sim):
   first lift the hand straight up above the surface with `interpolation` (handshake
   orientation `[1, 0, 0, 0]` reaches), then plan with cuRobo.
+- **Extra camera views.** A station may list image-only cameras next to `ego_view`
+  (the sim has `third_view`, a fixed camera ahead and to the right). They show the
+  hand and the object from the side, which is what the head camera loses once the
+  hand is in front of the object. Use them to judge contact, grasp and placement.
+  They have no 3D: localize with `ego_view` only.
 - **Leaving a work surface.** Neither the planner nor Home knows about tables,
   boxes or the robot's own legs. After releasing or touching something, back the
   hand away from the object, raise it 10 to 15 cm above the surface, and bring it

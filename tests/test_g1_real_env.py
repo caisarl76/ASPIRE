@@ -621,3 +621,34 @@ def test_first_engage_resends_start_when_the_first_one_is_lost(monkeypatch):
         assert fake.start_count == 2
     finally:
         e.close()
+
+
+def test_extra_camera_joins_the_observation_image_only():
+    from dataclasses import replace as dc_replace
+
+    from cap_harness.yam_real.cameras import CameraFrame
+
+    cfg = load_g1_station_config("g1-lab")
+    cfg = dc_replace(cfg, camera=dc_replace(cfg.camera, aux_roles=("third_view",)))
+
+    class _TwoViews(SyntheticCamera):
+        def read_aux(self, role):
+            frame = self.read()
+            return CameraFrame(
+                rgb=frame.rgb,
+                depth_m=np.zeros(frame.depth_m.shape),
+                intrinsics=frame.intrinsics,
+                timestamp_s=frame.timestamp_s,
+            )
+
+    home = codec.upper_body_from_arms(
+        cfg.waist_targets, cfg.arms["left"].home_joints, cfg.arms["right"].home_joints
+    )
+    e = G1Env(cfg, FakeBodyClient(initial_q17=home), camera=_TwoViews())
+    try:
+        assert e.camera_aliases == ("ego_view", "third_view")
+        observation = codec.observation(e)
+        assert set(observation.cameras) == {"ego_view", "third_view"}
+        assert observation.cameras["third_view"].frame == "third_view_optical"  # no extrinsic
+    finally:
+        e.close()

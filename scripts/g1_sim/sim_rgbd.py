@@ -14,7 +14,8 @@ the robot as it stands now (it steps a little when dropped), the bottle upright.
 The head camera is moved to the real D435 mounting and field of view (the transform comes
 from the g1-lab station profile), so the g1-sim profile shares the real camera transform.
 Frames go out on tcp://*:<port> in the composed-camera schema ASPIRE's G1 camera client
-reads: ``ego_view`` RGB, ``ego_view_depth`` uint16 millimetres, ``intrinsics``. Each
+reads: ``ego_view`` RGB, ``ego_view_depth`` uint16 millimetres, ``intrinsics``, plus an
+image-only ``third_view`` from a fixed camera ahead and to the right of the robot. Each
 message also carries ``sim_truth`` for checking runs; ASPIRE ignores it: object positions
 in the torso frame, and per object the robot links that touched it since the previous
 message as ``[peak normal force, x, y, z]`` with the contact point in the link's frame
@@ -49,6 +50,27 @@ MAX_DEPTH_M = 4.0  # beyond this the RealSense reports no return
 # top is at torso height with its near face 0.30 m ahead, and a 500 ml bottle on it.
 CASE_NEAR_X, CASE_DEPTH, CASE_Y = 0.30, 0.40, (-0.25, 0.20)
 BOTTLE_XY = (0.36, -0.06)
+# A fixed third-person camera ahead and to the right, aimed at the bottle area
+# (published as image-only `third_view`): eye and target, torso frame.
+THIRD_EYE, THIRD_TARGET, THIRD_FOVY = (0.95, -0.75, 0.40), (0.40, -0.08, 0.02), 60.0
+
+
+def _look_at(eye: np.ndarray, target: np.ndarray) -> np.ndarray:
+    """MuJoCo camera orientation (looks down -z, +y up) from eye to target, world up +z."""
+    z = eye - target
+    z = z / np.linalg.norm(z)
+    x = np.cross([0.0, 0.0, 1.0], z)
+    x = x / np.linalg.norm(x)
+    y = np.cross(z, x)
+    quat = np.zeros(4)
+    mujoco.mju_mat2Quat(quat, np.column_stack([x, y, z]).ravel())
+    return quat
+
+
+def _third_view_pose(ahead, torso_z: float) -> tuple[np.ndarray, np.ndarray]:
+    eye = np.array([*ahead(*THIRD_EYE[:2]), torso_z + THIRD_EYE[2]])
+    target = np.array([*ahead(*THIRD_TARGET[:2]), torso_z + THIRD_TARGET[2]])
+    return eye, _look_at(eye, target)
 
 
 def _camera_pose() -> tuple[np.ndarray, np.ndarray]:
@@ -120,6 +142,11 @@ def _add_objects(spec: mujoco.MjSpec) -> None:
         size=[CASE_DEPTH / 2, (CASE_Y[1] - CASE_Y[0]) / 2, tz / 2],
         rgba=[0.06, 0.06, 0.07, 1.0],
     )
+    eye, quat = _third_view_pose(ahead, tz)
+    rig = world.add_body(
+        name="aspire_third_view_rig", mocap=True, pos=eye.tolist(), quat=quat.tolist()
+    )
+    rig.add_camera(name="aspire_third_view", fovy=THIRD_FOVY)
     bottle = world.add_body(
         name="aspire_bottle", pos=[*ahead(*BOTTLE_XY), tz + 0.075], quat=upright
     )
@@ -197,6 +224,8 @@ class RgbdPublisher:
             "fx": focal, "fy": focal, "ppx": WIDTH / 2.0, "ppy": HEIGHT / 2.0,
             "width": WIDTH, "height": HEIGHT, "depth_scale": 0.001,
         }  # fmt: skip
+        third_focal = HEIGHT / 2.0 / math.tan(math.radians(THIRD_FOVY) / 2.0)
+        self._third_intrinsics = {**self._intrinsics, "fx": third_focal, "fy": third_focal}
 
     reset_requested = False
     band_on = staticmethod(lambda: None)  # set once the simulator exists
@@ -218,11 +247,19 @@ class RgbdPublisher:
         self._depth.update_scene(data, camera="head_camera")
         rgb = self._rgb.render()
         depth = self._depth.render()
+        third = None
+        if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "aspire_third_view") >= 0:
+            self._rgb.update_scene(data, camera="aspire_third_view")
+            third = self._rgb.render()
         depth_mm = np.where(depth < MAX_DEPTH_M, np.round(depth * 1000.0), 0).astype(np.uint16)
         message = {
             "timestamps": {"ego_view": time.time()},
-            "images": {"ego_view": rgb, "ego_view_depth": depth_mm},
-            "intrinsics": {"ego_view": self._intrinsics},
+            "images": {
+                "ego_view": rgb,
+                "ego_view_depth": depth_mm,
+                **({"third_view": third} if third is not None else {}),
+            },
+            "intrinsics": {"ego_view": self._intrinsics, "third_view": self._third_intrinsics},
             "sim_truth": {
                 **_truth(model, data),
                 "contacts": self._contacts.drain(),
@@ -254,6 +291,11 @@ def _place_objects(
     half_height = float(model.geom_size[model.body_geomadr[case]][2])
     data.mocap_pos[mocap] = [*ahead(CASE_NEAR_X + CASE_DEPTH / 2, sum(CASE_Y) / 2), half_height]
     data.mocap_quat[mocap] = upright
+    rig = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "aspire_third_view_rig")
+    if rig >= 0:
+        eye, quat = _third_view_pose(ahead, float(origin[2]))
+        data.mocap_pos[model.body_mocapid[rig]] = eye
+        data.mocap_quat[model.body_mocapid[rig]] = quat
     qpos, dof = model.jnt_qposadr[joint], model.jnt_dofadr[joint]
     data.qpos[qpos : qpos + 3] = [*ahead(*bottle_xy), 2 * half_height + 0.076]
     data.qpos[qpos + 3 : qpos + 7] = upright
@@ -274,6 +316,8 @@ def _truth(model: mujoco.MjModel, data: mujoco.MjData) -> dict[str, list[float]]
         body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
         if body >= 0:
             truth[name] = (rotation.T @ (data.xpos[body] - origin)).round(4).tolist()
+            if name == "aspire_bottle":  # 1.0 upright, 0.0 lying on its side
+                truth["aspire_bottle_upright"] = round(float(data.xmat[body][8]), 3)
     return truth
 
 

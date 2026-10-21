@@ -84,6 +84,9 @@ class G1CameraConfig:
     # Torso-frame height below which the dominant level plane is the floor and is
     # dropped from depth; None keeps the floor.
     floor_below_z_m: float | None = None
+    # Image-only extra cameras carried in the same camera message (no extrinsic: shown
+    # to the agent and the viewer, never used for 3D).
+    aux_roles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +266,7 @@ def load_g1_station_config(
             if raw_camera.get("floor_below_z_m") is None
             else float(raw_camera["floor_below_z_m"])
         ),
+        aux_roles=tuple(str(role) for role in raw_camera.get("aux_roles", ())),
     )
 
     raw_workspace = data["planning_workspace"]
