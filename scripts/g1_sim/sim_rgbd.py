@@ -6,10 +6,12 @@ does this):
     MUJOCO_GL=egl <fork>/.venv_sim/bin/python <aspire>/scripts/g1_sim/sim_rgbd.py
 
 The fork is not modified: this script builds the fork's simulator, swaps the scene model
-at load time and replaces its render hook. Headless (no viewer): the robot starts on the
-elastic band, and SIGUSR1 toggles the band exactly like the viewer's `9` key
+at load time and replaces its render hook. Headless (no viewer): the robot starts
+standing on its feet, held where it stands by the elastic band (the fork's band hangs it
+at 1 m, and SONIC started there flails and then falls when dropped). SIGUSR1 releases the
+band, fading it out over ``BAND_FADE_S``, or re-attaches it where the pelvis is
 (``kill -USR1 $(cat <pid-file>)``); SIGUSR2 re-places the case and the bottle in front of
-the robot as it stands now (it steps a little when dropped), the bottle upright.
+the robot as it stands now, the bottle upright.
 
 The head camera is moved to the real D435 mounting and field of view (the transform comes
 from the g1-lab station profile), so the g1-sim profile shares the real camera transform.
@@ -50,6 +52,15 @@ MAX_DEPTH_M = 4.0  # beyond this the RealSense reports no return
 # top is at torso height with its near face 0.30 m ahead, and a 500 ml bottle on it.
 CASE_NEAR_X, CASE_DEPTH, CASE_Y = 0.30, 0.40, (-0.25, 0.20)
 BOTTLE_XY = (0.36, -0.06)
+BAND_FADE_S = 2.0  # the band fades out over this long on release (no free fall)
+HOLD_KP, HOLD_KD = 100.0, 5.0  # the joint hold before the deploy's first command
+# The deploy's default_angles (policy_parameters.hpp), body joints in motor order
+SONIC_DEFAULT = np.array(
+    [-0.312, 0, 0, 0.669, -0.363, 0] * 2
+    + [0.0] * 3
+    + [0.2, 0.2, 0.0, 0.6, 0.0, 0.0, 0.0]
+    + [0.2, -0.2, 0.0, 0.6, 0.0, 0.0, 0.0]
+)
 # A fixed third-person camera ahead and to the right, aimed at the bottle area
 # (published as image-only `third_view`): eye and target, torso frame.
 THIRD_EYE, THIRD_TARGET, THIRD_FOVY = (0.95, -0.75, 0.40), (0.40, -0.08, 0.02), 60.0
@@ -378,6 +389,53 @@ def main() -> None:
 
         bridge.ElasticBand.Advance = advance_toward_start
 
+    # Feet-down start: the band holds the pelvis where it is (qpos0 stands on the floor)
+    # instead of pulling it to the fork's fixed point 1 m up, and a release fades it out.
+    from gear_sonic.utils.mujoco_sim import unitree_sdk2py_bridge as bridge
+
+    advance_band = bridge.ElasticBand.Advance
+
+    def advance_held(band: object, pose: np.ndarray) -> np.ndarray:
+        if getattr(band, "anchor", True):  # first use, or re-attached
+            band.point, band.anchor = np.array(pose[:3], dtype=float), False
+        scale = 1.0
+        released = getattr(band, "released_at", None)
+        if released is not None:
+            scale = max(0.0, 1.0 - (time.monotonic() - released) / BAND_FADE_S)
+            if scale == 0.0:
+                band.enable, band.released_at = False, None
+        return scale * advance_band(band, pose)
+
+    bridge.ElasticBand.Advance = advance_held
+
+    # Until the deploy's first command the joints get no torque and the torso slumps 30 deg
+    # on the band, which SONIC's start then swings out; a band holding the straight-legged
+    # qpos0 height also tips it 30 deg once the knees bend. So start in SONIC's default
+    # pose with the soles on the floor and hold it with a joint PD until that command.
+    torques = base_sim.DefaultEnv.compute_body_torques
+
+    def hold_until_commanded(env: object) -> np.ndarray:
+        low = env.unitree_bridge
+        if low is None or low.low_cmd_received:
+            return torques(env)
+        model, data = env.mj_model, env.mj_data
+        q = [env.body_joint_index[i] + env.qpos_offset - 1 for i in range(env.num_body_dof)]
+        dq = [env.body_joint_index[i] + env.qvel_offset - 1 for i in range(env.num_body_dof)]
+        if not getattr(env, "aspire_posed", False):  # once: default pose, soles down
+            ankle = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "left_ankle_roll_link")
+            before = data.xpos[ankle, 2]
+            data.qpos[q] = SONIC_DEFAULT
+            mujoco.mj_forward(model, data)
+            data.qpos[2] -= data.xpos[ankle, 2] - before
+            data.qvel[:] = 0.0
+            mujoco.mj_forward(model, data)
+            env.aspire_posed = True
+            if getattr(env, "elastic_band", None) is not None:
+                env.elastic_band.anchor = True  # hold the pelvis at its new height
+        return HOLD_KP * (SONIC_DEFAULT - data.qpos[q]) - HOLD_KD * data.qvel[dq]
+
+    base_sim.DefaultEnv.compute_body_torques = hold_until_commanded
+
     contacts = ContactLog()
     step = base_sim.DefaultEnv.sim_step
 
@@ -408,9 +466,14 @@ def main() -> None:
 
     def toggle_band(*_: object) -> None:
         band = getattr(sim.sim_env, "elastic_band", None)
-        if band is not None:
-            band.enable = not band.enable
-            print(f"[g1-sim] elastic band {'on' if band.enable else 'off'}", flush=True)
+        if band is None:
+            return
+        if band.enable and getattr(band, "released_at", None) is None:
+            band.released_at = time.monotonic()
+            print(f"[g1-sim] elastic band fading out over {BAND_FADE_S:.0f} s", flush=True)
+        else:  # off or fading: hold the robot where it is now
+            band.enable, band.released_at, band.anchor = True, None, True
+            print("[g1-sim] elastic band on, holding the pelvis where it is", flush=True)
 
     def reset_bottle(*_: object) -> None:
         publisher.reset_requested = True

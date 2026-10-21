@@ -281,6 +281,16 @@ scripts/start_system2_agent.sh --robot sim --allow-motion
 scripts/g1_sim.sh down
 ```
 
+Startup is feet-down (after dimos-dev-84's `startup_on_floor`): the robot starts in
+SONIC's default pose with the soles on the floor, a joint PD holds that pose until the
+deploy's first command, the band holds the pelvis where it stands instead of hanging it at
+1 m, and `drop` fades the band out over 2 s. Measured on fresh `smoke` runs against the old
+hanging start: in the 10 s after release the torso tilted at most 2.7-12 deg (was 40),
+moved 2.5-4.3 cm (was 20 cm) and turned 0.2-1.1 deg (was 74); settled tilt 1.6-2.4 deg
+(was 4.2). While held, the torso still leans about 30 deg forward for the ~5 s the
+deploy tracks its `reference/example/` clip before its planner starts; avoiding that
+needs the deploy to start in planner idle (the fork is left unmodified).
+
 The sim lives in `scripts/g1_sim/sim_rgbd.py`, which runs the fork's simulator with its
 own Python and leaves the fork unchanged: it swaps the scene at load (case, bottle, and
 `head_camera` moved to the real D435 pose and field of view, so the `g1-sim` profile

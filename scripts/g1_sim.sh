@@ -3,7 +3,8 @@
 #
 #   scripts/g1_sim.sh up      start the sim (headless, RGB-D on 5565) and the SONIC deploy
 #                             (command 5566, feedback 5567); waits for both
-#   scripts/g1_sim.sh drop    toggle the elastic band (drop the robot after engage)
+#   scripts/g1_sim.sh drop    release the elastic band (fades out over 2 s; run after engage);
+#                             again re-attaches it where the pelvis is
 #   scripts/g1_sim.sh reset [X Y]
 #                             place the case and the bottle in front of the robot as it
 #                             stands now (do this after drop; it steps when it lands);
@@ -97,7 +98,7 @@ status() {
 smoke() {
   local keep=0
   [[ "${1:-}" == "--keep" ]] && keep=1
-  # its drop toggles the band: on a sim whose robot already stands it would lift it again
+  # its drop toggles the band: on a sim whose robot already stands it would re-attach it
   ! running "$SIM" || { printf 'sim already up; run %s down first\n' "$0" >&2; exit 1; }
   up
   local providers=()
