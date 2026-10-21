@@ -318,6 +318,10 @@ def _truth(model: mujoco.MjModel, data: mujoco.MjData) -> dict[str, list[float]]
             truth[name] = (rotation.T @ (data.xpos[body] - origin)).round(4).tolist()
             if name == "aspire_bottle":  # 1.0 upright, 0.0 lying on its side
                 truth["aspire_bottle_upright"] = round(float(data.xmat[body][8]), 3)
+    # the torso in the world: how far SONIC moves the frame everything is expressed in
+    pitch = math.degrees(math.asin(-float(np.clip(rotation[2, 0], -1, 1))))
+    roll = math.degrees(math.atan2(rotation[2, 1], rotation[2, 2]))
+    truth["torso_world"] = [*origin.round(4).tolist(), round(pitch, 2), round(roll, 2)]
     return truth
 
 

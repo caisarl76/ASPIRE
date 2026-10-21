@@ -12,6 +12,8 @@ the sim's own truth: object positions and robot-object contacts in every camera 
   grip      palm to the bottle, contact-aware close, lift 5 cm, put back, open
   outage    feedback cut for 2 s while SONIC runs, then resume and re-engage
   curobo    cuRobo planning with the live depth scene: over the case and back
+  lean      how far SONIC moves the torso (and so every torso-frame position) as the
+            right hand reaches out over the case
   watch     record the sim's truth to a JSONL file (for agent runs); --summary reads one
 """
 
@@ -576,6 +578,45 @@ def exp_curobo(args: argparse.Namespace) -> int:
         adapter.close()
 
 
+def exp_lean(args: argparse.Namespace) -> int:
+    truth = SimTruth(args.camera_port)
+    env, adapter, api = build()
+    rows = []
+    try:
+        env.engage()
+        standing(truth)
+        sim("reset")
+        time.sleep(2.0)
+        adapter.go_home(arm="both")
+        time.sleep(2.0)
+        base = truth.latest["torso_world"]
+        case0 = truth.position("aspire_case")
+        rows.append(("at home", None, f"torso z {base[2]:.3f} m, pitch {base[3]:+.1f} deg"))
+        for label, target in (
+            ("hand raised at home", [0.25, -0.25, 0.10]),
+            ("hand 0.30 m ahead", [0.30, -0.15, 0.10]),
+            ("hand 0.40 m ahead", [0.40, -0.12, 0.10]),
+            ("hand 0.48 m ahead", [0.48, -0.10, 0.10]),
+        ):
+            move(api, target, tolerance=0.06)
+            time.sleep(2.0)
+            now = truth.latest["torso_world"]
+            shift = (truth.position("aspire_case") - case0) * 100
+            rows.append(
+                (
+                    label,
+                    None,
+                    f"torso dz {(now[2] - base[2]) * 100:+.1f} cm, pitch {now[3] - base[3]:+.1f} deg, "
+                    f"a fixed object moves {np.round(shift, 1).tolist()} cm in the torso frame",
+                )
+            )
+        adapter.go_home(arm="both")
+        return report(rows)
+    finally:
+        truth.close()
+        adapter.close()
+
+
 def exp_watch(args: argparse.Namespace) -> int:
     """Record every truth message until interrupted (or --seconds), then summarize."""
     import json
@@ -631,7 +672,8 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument(
-        "experiment", choices=["engage", "heading", "retreat", "grip", "outage", "curobo", "watch"]
+        "experiment",
+        choices=["engage", "heading", "retreat", "grip", "outage", "curobo", "lean", "watch"],
     )
     parser.add_argument(
         "--out", default="/tmp/aspire-g1-sim-watch.jsonl", help="watch: the JSONL file"
