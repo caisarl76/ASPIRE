@@ -16,6 +16,34 @@ Act through `cap_move_to_pose`, `cap_set_gripper`, `cap_g1_real__set_hand_joints
 place spot are inside it before planning, and ask the operator to move the table or
 robot rather than forcing a pose.
 
+## Where grasps work (sim, Dex3, right hand)
+
+Measured in the MuJoCo sim with a side grasp: the hand level, thumb up, palm facing
++y, approaching along +y. The bottle axis is given in the `torso` frame. Each cell
+counts full successes (touch, close, lift 3 cm or more, set down upright) out of 3:
+
+| Bottle x \ y | -0.18 | -0.10 | -0.02 | +0.06 |
+| --- | --- | --- | --- | --- |
+| 0.34 | 2/3 | 3/3 | 0/3 | 1/3 |
+| 0.40 | 0/3 (reach edge) | 2/3 | 1/3 | 1/3 |
+| 0.46 and farther | out of reach | out of reach | out of reach | out of reach |
+
+- **Best band:** bottle axis x 0.34 to 0.40, y -0.18 to -0.10, right of the torso
+  center. Grasp there when you can choose the spot. When the bottle sits outside it,
+  ask the operator to move the bottle or the robot rather than forcing a pose.
+- **Reach:** from x 0.46 out the palm cannot reach the bottle's side in this
+  orientation (`ik_unreachable`). Try the turned-hand orientations from the touch
+  recipe before asking for a move.
+- **Pressing in:** the first contact is usually the index finger base, and SONIC stops
+  the hand 1 to 4 cm short of its target. In the best band, after the first finger
+  contact, step another 2 to 3 cm along +y so the palm meets the bottle, then close.
+  Near the center (y -0.02 and beyond) that extra push tipped the bottle off the case
+  in 4 of 12 runs, so do not press past contact there.
+- **Stale positions:** the torso pitches about 9 deg during startup Home and shifts its
+  stance between engages, which moves the bottle up to 10 cm in the torso frame.
+  Localize after Home and again after any re-engage.
+- These numbers are from the sim. On the robot, treat them as a starting guide.
+
 ## Strategy
 
 1. Localize the bottle with `cap_localize_object` in `ego_view`. Reject a mask on the

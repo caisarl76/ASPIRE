@@ -60,9 +60,11 @@ reaches farther; it touches the bottle's rear-right side instead of its right si
    raise it above `z`; the planning model has no table and no legs. **Reach is decided
    by trying, not by a distance rule**: an `ik_unreachable` or "outside the configured
    limits" refusal moves nothing. On a refusal retry with `t = -30 deg`, then
-   `t = -45 deg`, then a contact point 2 to 3 cm higher. As a guide, IK reaches a
-   bottle axis about 0.46 m in front of the torso at 0.10 m contact height. Ask the
-   operator to move the bottle only after all of these are refused.
+   `t = -45 deg`, then a contact point 2 to 3 cm higher. As a guide, with `t = 0` the
+   Dex3 palm reliably reaches a bottle axis 0.34 to 0.40 m ahead and 0.10 to 0.18 m
+   right of the torso center; from 0.46 m ahead it is refused (sim, see the reach map
+   in the bottle pick recipe). Ask the operator to move the bottle only after all of
+   these are refused.
 5. Approach along `+n` with steps of at most 2 cm toward `S`, and look (`observe`)
    after each step. Stop at the first step where the image shows the palm on the
    bottle or the bottle moving. Never push past contact. Near contact the hand hides
