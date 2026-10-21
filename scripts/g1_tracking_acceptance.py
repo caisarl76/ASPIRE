@@ -91,7 +91,9 @@ def run_segments(env, segment_m: float, partial: dict) -> dict:
         t0 = time.monotonic()
         # At the profile's planning speed a 15 cm vertical move is ~150 waypoints,
         # past move_to_pose's default budget of 120.
-        result = api.move_to_pose(target, arm=side, strategy=strategy, max_steps=600)
+        result = api.move_to_pose(
+            target, SEGMENT_MAX_POSITION_M, arm=side, strategy=strategy, max_steps=600
+        )
         duration = time.monotonic() - t0
         if result.error is not None and result.error.code == ErrorCode.IK_UNREACHABLE:
             raise RuntimeError(f"segment {i}: {result.error}")

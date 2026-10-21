@@ -484,7 +484,6 @@ def exp_outage(_: argparse.Namespace) -> int:
     try:
         env.engage()
         time.sleep(1.5)
-        cut = time.monotonic()
         proxy.paused = True
         time.sleep(2.0)
         refused = move(api, hand(env) + [0.0, 0.0, 0.03], current_quat(env))
