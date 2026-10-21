@@ -423,6 +423,18 @@ Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
    through a 5.5 cm lift. It then put the bottle down, lifted it 3.5 cm again to move it
    back toward its spot, set it down upright and released it. 39 tool calls, 106k
    tokens, about 6 min; heading span 9 deg; Home unverified (0.097 / 0.075 rad).
+10. With "command `S` exactly" in the recipe: failed, and the cause is the localization.
+    The agent did compute `S` exactly from the returned center, but all six bottle
+    localizations were biased by the same amount against sim truth: x -3.1 to -3.2 cm
+    (toward the robot), y +0.3 to +0.4 cm, z +1.7 to +1.8 cm. So every site landed about
+    3 cm short (x 0.388-0.393 instead of 0.42), and the first two closes pulled the
+    bottle 2-3 cm toward the robot again. A third attempt with the hand turned -30 deg
+    (the agent's own choice) knocked the bottle off the case. The center is the middle
+    of the PCA box around the bottle's visible points (`estimate_oriented_bounding_box`).
+    The camera sees only the front of the opaque sim bottle, so the box sits on that
+    front shell, toward the camera from the axis. Run 9's third close landed at 0.42 by
+    chance. The touch recipe's "within about 1 cm on the robot" has no recorded
+    measurement; the real bottle is clear plastic, which the D435 sees differently.
 
 ### Sim2sim (SONIC MuJoCo loop)
 
