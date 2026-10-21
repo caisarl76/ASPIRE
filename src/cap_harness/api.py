@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
+import time
 from typing import Any
 
 import numpy as np
@@ -1378,33 +1379,41 @@ class CapApi:
         that residual is the bias the correction rounds exist to remove, and
         the pose error is the criterion that decides them.
         """
-        plan = self._stage(
-            "plan_motion",
-            self.plan_motion,
-            target_pose,
-            arm=arm,
-            strategy=strategy,
-        )
-        if not plan.ok or plan.trajectory is None:
-            return ExecutionResult(ok=False, steps_executed=0, error=plan.error)
-        if len(plan.trajectory.joint_positions) > max_steps:
-            return ExecutionResult(
-                ok=False,
-                steps_executed=0,
-                error=ApiError(
-                    code=ErrorCode.INVALID_REQUEST,
-                    message="planned trajectory exceeds max_steps",
-                    details={
-                        "waypoint_count": len(plan.trajectory.joint_positions),
-                        "max_steps": max_steps,
-                    },
-                ),
+        for replan in range(_STALE_REPLANS + 1):
+            plan = self._stage(
+                "plan_motion",
+                self.plan_motion,
+                target_pose,
+                arm=arm,
+                strategy=strategy,
             )
-        execution = self._stage(
-            "execute_trajectory",
-            self.execute_trajectory,
-            plan.trajectory,
-        )
+            if not plan.ok or plan.trajectory is None:
+                return ExecutionResult(ok=False, steps_executed=0, error=plan.error)
+            if len(plan.trajectory.joint_positions) > max_steps:
+                return ExecutionResult(
+                    ok=False,
+                    steps_executed=0,
+                    error=ApiError(
+                        code=ErrorCode.INVALID_REQUEST,
+                        message="planned trajectory exceeds max_steps",
+                        details={
+                            "waypoint_count": len(plan.trajectory.joint_positions),
+                            "max_steps": max_steps,
+                        },
+                    ),
+                )
+            execution = self._stage(
+                "execute_trajectory",
+                self.execute_trajectory,
+                plan.trajectory,
+            )
+            # A plan bound to a start the arm has since drifted from (a tracking
+            # controller keeps settling after a long move) moved nothing; plan
+            # again from where the arm is now rather than loosen the start check.
+            stale = execution.error is not None and execution.error.code == ErrorCode.STALE_PLAN
+            if not stale or replan == _STALE_REPLANS:
+                break
+            time.sleep(_STALE_REPLAN_WAIT_S)
         if not execution.ok and not (correcting and _residual_only_failure(execution)):
             return execution
         return self._validate_pose_execution(execution, goal or target_pose, tolerance, arm)
@@ -2150,6 +2159,8 @@ class CapApi:
 __all__ = ["CapApi"]
 
 
+_STALE_REPLANS = 2  # move_to_pose re-plans this often after a stale-start refusal
+_STALE_REPLAN_WAIT_S = 0.5
 _POSE_CORRECTION_MAX_OFFSET_M = 0.05  # per axis, command minus goal
 _POSE_CORRECTION_STALL_RATIO = 0.75  # a round must beat this fraction of the previous error
 

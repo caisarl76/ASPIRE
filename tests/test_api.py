@@ -1337,3 +1337,35 @@ def test_close_gripper_records_where_a_contact_grip_stopped() -> None:
     assert api.close_gripper().ok
     # later arm moves carry 0.62 and hold the grip, rather than 0.0 (full close)
     assert api._commanded_gripper_positions["primary"] == pytest.approx(0.62)
+
+
+def test_move_to_pose_replans_when_the_arm_drifted_after_planning(monkeypatch) -> None:
+    import cap_harness.api as api_module
+
+    monkeypatch.setattr(api_module, "_STALE_REPLAN_WAIT_S", 0.0)
+
+    class _DriftsOnce(FakeAdapter):
+        drift_pending = False
+
+        def get_robot_state(self):
+            if self.drift_pending:  # the arm moved between planning and execution
+                self.drift_pending = False
+                drifted = {arm: q + 0.05 for arm, q in self.state.joint_positions.items()}
+                self.state = replace(self.state, joint_positions=drifted)
+            return self.state
+
+    class _ScheduleDrift(FakeIK):
+        def solve_ik(self, target_pose, robot_state, *, arm="primary"):
+            if not self.targets:
+                adapter.drift_pending = True
+            return super().solve_ik(target_pose, robot_state, arm=arm)
+
+    adapter = _DriftsOnce()
+    ik = _ScheduleDrift(np.full(7, 0.1))
+    api = CapApi(adapter, ik_providers={"pyroki": ik})
+
+    result = api.move_to_pose(_pose(), tolerance=0.01)
+
+    assert result.ok
+    assert len(ik.targets) == 2  # planned again from the drifted start
+    assert len(adapter.executed) == 1  # the stale plan moved nothing

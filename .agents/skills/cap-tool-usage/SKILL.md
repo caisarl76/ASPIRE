@@ -129,7 +129,10 @@ Applies when the capability graph shows `g1_real` (operator runbook: `docs/g1-re
   sees only the faces the camera sees: space behind or under an object counts as
   free, and a scene it cannot solve is refused ("could not find a feasible plan"),
   which moves nothing. On a refusal, raise the hand and come back toward the body in
-  short `interpolation` moves (see the next item), then plan again.
+  short `interpolation` moves (see the next item), then plan again. From Home the hand
+  sits below the work surface next to it, and cuRobo refuses that narrow start (sim):
+  first lift the hand straight up above the surface with `interpolation` (handshake
+  orientation `[1, 0, 0, 0]` reaches), then plan with cuRobo.
 - **Leaving a work surface.** Neither the planner nor Home knows about tables,
   boxes or the robot's own legs. After releasing or touching something, back the
   hand away from the object, raise it 10 to 15 cm above the surface, and bring it

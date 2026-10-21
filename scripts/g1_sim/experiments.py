@@ -178,6 +178,11 @@ class ArmSampler:
                 yaw = math.degrees(math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
                 self.rows.append((time.monotonic(), q, dq, yaw))
 
+    def displacement(self, start: float, end: float) -> float:
+        """Largest arm-joint excursion from the first sample at or after ``start``."""
+        rows = [q for t, q, _, _ in self.rows if start <= t <= end]
+        return float(np.max(np.abs(np.array(rows) - rows[0]))) if rows else float("nan")
+
     def peak_speed(self, start: float, end: float = math.inf) -> float:
         speeds = [float(np.max(np.abs(dq))) for t, _, dq, _ in self.rows if start <= t <= end]
         return max(speeds, default=float("nan"))
@@ -199,6 +204,10 @@ def report(rows: list[tuple[str, bool | None, str]]) -> int:
 
 def hand(env: G1Env, side: str = "right") -> np.ndarray:
     return np.asarray(env.get_observations(side)["ee_pos"], dtype=float)
+
+
+def current_quat(env: G1Env, side: str = "right") -> np.ndarray:
+    return np.asarray(env.get_observations(side)["ee_quat"], dtype=float)[[3, 0, 1, 2]]
 
 
 def move(
@@ -478,43 +487,29 @@ def exp_outage(_: argparse.Namespace) -> int:
         cut = time.monotonic()
         proxy.paused = True
         time.sleep(2.0)
-        refused = move(api, hand(env) + [0.0, 0.0, 0.03])
+        refused = move(api, hand(env) + [0.0, 0.0, 0.03], current_quat(env))
+        reason = refused.error.message if refused.error else "moved"
         rows.append(
-            (
-                "motion refused while blind",
-                not refused.ok,
-                str(refused.error.code if refused.error else "moved"),
-            )
+            ("motion refused while blind", not refused.ok and "stale" in reason, reason[:70])
         )
         proxy.paused = False
         resumed = time.monotonic()
         time.sleep(1.5)
+        moved = sampler.displacement(resumed, resumed + 1.5)
         rows.append(
             (
-                "arm speed at resume (hold measured)",
-                sampler.peak_speed(resumed, resumed + 1.5) < 0.5,
-                f"peak {sampler.peak_speed(resumed, resumed + 1.5):.2f} rad/s",
-            )
-        )
-        rows.append(
-            (
-                "arm speed while blind (SONIC idles them)",
-                None,
-                f"peak {sampler.peak_speed(cut, resumed):.2f} rad/s",
+                "no jump at resume (hold measured)",
+                moved < 0.1,
+                f"arms moved {moved:.3f} rad, peak {sampler.peak_speed(resumed, resumed + 1.5):.2f} rad/s",
             )
         )
         re = env.engage()
         t = time.monotonic()
         time.sleep(1.5)
         rows.append(("re-engage runs hold + start", not re["already_engaged"], ""))
-        rows.append(
-            (
-                "arm speed after re-engage",
-                sampler.peak_speed(t, t + 1.5) < 0.5,
-                f"peak {sampler.peak_speed(t, t + 1.5):.2f} rad/s",
-            )
-        )
-        after = move(api, hand(env) + [0.0, 0.0, 0.03])
+        moved = sampler.displacement(t, t + 1.5)
+        rows.append(("no jump at re-engage", moved < 0.1, f"arms moved {moved:.3f} rad"))
+        after = move(api, hand(env) + [0.0, 0.0, 0.03], current_quat(env))
         rows.append(
             (
                 "moves again",
@@ -530,10 +525,33 @@ def exp_outage(_: argparse.Namespace) -> int:
 
 
 def exp_curobo(args: argparse.Namespace) -> int:
+    """CuRobo with the live depth scene: from home, over the case beside the bottle, back.
+
+    From home the hand sits below the case top a few cm from its near face, the narrow
+    start the real robot has after Home; the second leg tests lifting it first with an
+    interpolation move (the tool guide's advice on a refusal).
+    """
     truth = SimTruth(args.camera_port)
     env, adapter, api = build(camera=True, curobo_url=args.curobo_url)
     plan = MotionStrategy(ik_solver="mink", trajectory_planner="curobo")
+    cfg = env.config
+    home_fk = env.kin.forward_kinematics(
+        cfg.arms["left"].home_joints, cfg.arms["right"].home_joints
+    )
+    home_pos, home_quat = np.asarray(home_fk[2]), np.asarray(home_fk[3])[[3, 0, 1, 2]]
     rows = []
+
+    def leg(
+        label: str, target, quat=HANDSHAKE_WXYZ, strategy=plan, expect: bool | None = True
+    ) -> bool:
+        t = time.monotonic()
+        result = move(api, target, quat, strategy=strategy, tolerance=0.06)
+        detail = f"{time.monotonic() - t:.1f} s" + (
+            "" if result.ok else f" [{result.error.code}: {result.error.message[:80]}]"
+        )
+        rows.append((label, result.ok if expect else None, detail))
+        return result.ok
+
     try:
         env.engage()
         standing(truth)
@@ -541,19 +559,15 @@ def exp_curobo(args: argparse.Namespace) -> int:
         time.sleep(2.0)
         adapter.go_home(arm="both")
         axis = truth.position("aspire_bottle")
-        side = axis + [0.06, -(BOTTLE_RADIUS_M + 0.02 + 0.08), 0.02]
+        beside = axis + [0.06, -(BOTTLE_RADIUS_M + 0.02 + 0.08), 0.02]
         since = time.monotonic()
-        for label, target in (
-            ("home -> beside the bottle", side),
-            ("beside the bottle -> up and back", [0.25, -0.25, axis[2] + 0.12]),
-            ("-> near home", [0.25, -0.25, -0.15]),
-        ):
-            t = time.monotonic()
-            result = move(api, target, strategy=plan)
-            detail = f"{time.monotonic() - t:.1f} s" + (
-                "" if result.ok else f" [{result.error.code}: {result.error.message[:90]}]"
-            )
-            rows.append((label, result.ok, detail))
+        leg("from home straight to beside the bottle", beside, expect=None)
+        adapter.go_home(arm="both")
+        lifted = [home_pos[0], home_pos[1], axis[2] + 0.12]
+        leg("lift from home (interpolation, handshake)", lifted, HANDSHAKE_WXYZ, INTERP)
+        leg("then cuRobo to beside the bottle", beside)
+        leg("beside the bottle -> up and back", [0.25, -0.25, axis[2] + 0.12])
+        leg("-> the home pose", home_pos, home_quat)
         hit = sorted(truth.touches("aspire_case", since))
         rows.append(("no case contact", not hit, str(hit or "none")))
         return report(rows)
