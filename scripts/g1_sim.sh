@@ -97,6 +97,8 @@ status() {
 smoke() {
   local keep=0
   [[ "${1:-}" == "--keep" ]] && keep=1
+  # its drop toggles the band: on a sim whose robot already stands it would lift it again
+  ! running "$SIM" || { printf 'sim already up; run %s down first\n' "$0" >&2; exit 1; }
   up
   local providers=()
   if curl --noproxy '*' -sf -m 3 http://192.168.75.174:8114/healthz >/dev/null; then

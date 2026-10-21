@@ -377,6 +377,13 @@ Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
    9.3 deg, no left-hand contact, bottle up 5.8 cm, back upright 1.5 cm from its start;
    the first close slid again and the second held. `hold_heading` is on in `g1-sim`
    only; enable it on a real profile after a check with the robot hanging.
+7. With grip squeeze 0.35 (bottle at torso x 0.37, y -0.06): the first close and lift
+   held (bottle up 5.6 cm; runs 5 and 6 slipped here). The task then failed. Reading a
+   7.3 cm measured hand rise, the agent "corrected" the height 0.8 cm down, the bottle
+   came back down onto the case and out of the grip, a second close near the neck and a
+   diagonal move (6 cm forward, 5 cm up) tipped it off the case to the floor beside the
+   left foot. The agent rejected a localization that found the hand, reported the task
+   incomplete and went Home. Why the 0.8 cm move lost the grip is not yet known.
 
 ### Sim2sim (SONIC MuJoCo loop)
 
