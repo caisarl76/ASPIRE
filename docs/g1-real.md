@@ -331,6 +331,17 @@ Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
    pitched about 9 deg during startup Home and then held, which alone moves an object
    0.35 m ahead by 5-6 cm in the torso frame: localize after Home, not before.
    `watch --summary` now also prints the bottle's world drift and the torso's yaw.
+4. With the reach map in the recipes (pick, lift 5 cm, put back, release, Home; bottle at
+   torso x 0.36, y -0.06): the agent never reached the bottle. Its staging move (right
+   site at 0.24, -0.244, 0.20, handshake) first exceeded `max_steps` (171 > 120). With
+   `max_steps` 300, the first pass ended 3 cm off while SONIC yawed the torso 14 deg.
+   The correction round then ended 45.5 cm off: the torso lurched 5 cm, turned to -22 deg
+   yaw, the uncommanded left hand struck the case (up to 58 N), and the right hand
+   finished over the head (z 0.48). Home was then refused, because the retreat IK put the
+   right wrist pitch at the model limit (-1.61443), just past the profile's -1.6144.
+   Retreat rows are now clipped to the profile limits. The diverging correction round is
+   not yet explained. The bottle stayed upright but slid 5 cm. SAM3 returned a 0.22 m
+   box (score 0.04) that the recipe says to reject; the agent never used it.
 
 ### Sim2sim (SONIC MuJoCo loop)
 

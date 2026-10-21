@@ -588,7 +588,12 @@ class G1Env:
             columns[side] = [[codec.hand_scalar(hands[side], cfg.open, cfg.closed)]]
         home = {side: np.asarray(self.config.arms[side].home_joints, float) for side in ARMS}
         retreat = self._home_retreat(home)  # (k, 2, 7) joint rows, possibly empty
-        rows = {side: [*retreat[:, i], home[side]] for i, side in enumerate(ARMS)}
+        # IK uses the model's limits (wrists +-1.61443), a hair wider than the profile's.
+        arms = self.config.arms
+        rows = {
+            side: [*np.clip(retreat[:, i], arms[side].lower, arms[side].upper), home[side]]
+            for i, side in enumerate(ARMS)
+        }
         n = len(rows["left"])
         step_s = RETREAT_STEP_M / RETREAT_SPEED_M_S
         timestamps = [i * step_s for i in range(n - 1)]

@@ -596,6 +596,20 @@ def test_home_from_a_raised_hand_lifts_and_comes_back_before_descending(env, mon
     )
 
 
+def test_home_retreat_at_the_model_wrist_limit_is_not_refused(env, monkeypatch):
+    _raise_right_hand(env)
+    lower = env.config.arms["right"].lower[5]
+    original = env._home_retreat
+
+    def at_model_limit(home):
+        retreat = original(home)
+        retreat[:, 1, 5] = lower - 3e-5  # the model's -1.61443 past the profile's -1.6144
+        return retreat
+
+    monkeypatch.setattr(env, "_home_retreat", at_model_limit)
+    assert env.go_home(duration_s=0.3)["success"] is True
+
+
 def test_home_near_home_goes_straight_there(env):
     result = env.go_home(duration_s=0.3)
     assert result["success"] is True and result["retreat_waypoints"] == 0
