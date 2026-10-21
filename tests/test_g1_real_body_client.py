@@ -238,3 +238,27 @@ def test_without_hold_heading_the_current_heading_is_sent():
         assert client._facing_yaw(_at(-0.08)) == pytest.approx(-0.08)
     finally:
         client.close()
+
+
+def test_hold_heading_survives_a_planner_reference_reset():
+    # A start to a running deploy resets its planner reference to the current heading;
+    # a heading held in the old frame then commands a turn (30-45 deg in a sim rehearsal).
+    from dataclasses import replace
+
+    def at(base: float, reference: float) -> dict:
+        return _feedback(
+            base_quat=_quat_yaw(base),
+            reference_heading_quat=_quat_yaw(reference),
+            planner_reference_active=[1],
+        )
+
+    client = SonicZmqBodyClient(replace(_cfg(5790), hold_heading=True))
+    try:
+        assert client._facing_yaw(at(0.40, 0.0)) == pytest.approx(0.40)  # latched
+        # the reference jumps to the robot's heading, the robot has not moved:
+        # hold the same physical heading, which is zero in the new frame
+        assert client._facing_yaw(at(0.40, 0.40)) == pytest.approx(0.0)
+        # turned 0.1 rad by an arm reach: command back to the held heading
+        assert client._facing_yaw(at(0.30, 0.40)) == pytest.approx(0.0)
+    finally:
+        client.close()

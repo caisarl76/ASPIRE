@@ -156,7 +156,16 @@ class SonicZmqBodyClient:
 
     @staticmethod
     def _known_heading(msg: dict) -> float | None:
-        """Yaw that holds the current heading, in the frame SONIC reads ``facing`` in.
+        """Yaw that holds the current heading, in the frame SONIC reads ``facing`` in."""
+        reference = SonicZmqBodyClient._reference_yaw(msg)
+        if reference is None:
+            return None
+        delta = heading_yaw_from_quat_wxyz(np.asarray(msg["base_quat"]).reshape(-1)) - reference
+        return math.atan2(math.sin(delta), math.cos(delta))
+
+    @staticmethod
+    def _reference_yaw(msg: dict) -> float | None:
+        """IMU yaw of the planner frame's zero, the frame SONIC reads ``facing`` in.
 
         The planner's frame has yaw zero at the heading the policy initialised
         with: the fork's deploy publishes that correction as
@@ -176,15 +185,12 @@ class SonicZmqBodyClient:
             active = float(np.asarray(msg.get("planner_reference_active", 0)).reshape(-1)[0])
             if active != 1:
                 return None  # planner initialising at reference yaw zero
-            reference = yaw("reference_heading_quat")
-        elif "init_base_quat" in msg:
-            reference = yaw("init_base_quat") + float(
+            return yaw("reference_heading_quat")
+        if "init_base_quat" in msg:
+            return yaw("init_base_quat") + float(
                 np.asarray(msg.get("delta_heading", 0.0)).reshape(-1)[0]
             )
-        else:
-            return None
-        delta = yaw("base_quat") - reference
-        return math.atan2(math.sin(delta), math.cos(delta))
+        return None
 
     def _facing_yaw(self, msg: dict | None) -> float:
         """The heading to command: the current one, or with ``hold_heading`` the engage one.
@@ -192,23 +198,31 @@ class SonicZmqBodyClient:
         Sending the current heading never turns the robot back, so every turn an arm
         reach causes becomes the new command and the heading drifts over a task
         (20-40 deg in the sim agent runs, which swung the idle hand into the case).
-        The held heading is latched at the first known heading after ``start`` and
-        dropped whenever the heading is unknown (its frame may be re-initialising).
+        The held heading is the IMU yaw latched at the first known heading after
+        ``start``, sent relative to the planner's current reference: a deploy resets
+        that reference on a start (twice), and a heading held in the old frame
+        commanded a 30-45 deg turn in a sim rehearsal. It is dropped whenever the
+        heading is unknown.
         """
-        heading = None if msg is None else self._known_heading(msg)
-        if heading is None:
+        reference = None if msg is None else self._reference_yaw(msg)
+        if reference is None:
             self._held_yaw = None
             return 0.0
+        imu = heading_yaw_from_quat_wxyz(np.asarray(msg["base_quat"]).reshape(-1))
+
+        def wrap(angle: float) -> float:
+            return math.atan2(math.sin(angle), math.cos(angle))
+
         if not self._config.hold_heading:
-            return heading
-        if self._held_yaw is not None:
-            delta = heading - self._held_yaw
-            if abs(math.atan2(math.sin(delta), math.cos(delta))) > _HOLD_HEADING_MAX_RAD:
-                _log.warning("heading %.2f rad from the held one; holding the current", delta)
-                self._held_yaw = None
+            return wrap(imu - reference)
+        if self._held_yaw is not None and abs(wrap(imu - self._held_yaw)) > _HOLD_HEADING_MAX_RAD:
+            _log.warning(
+                "heading %.2f rad from the held one; holding the current", imu - self._held_yaw
+            )
+            self._held_yaw = None
         if self._held_yaw is None:
-            self._held_yaw = heading
-        return self._held_yaw
+            self._held_yaw = imu
+        return wrap(self._held_yaw - reference)
 
     def get_observations(self) -> dict[str, np.ndarray | float] | None:
         msg, stamp = self._snapshot()
