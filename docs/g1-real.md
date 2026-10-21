@@ -347,8 +347,23 @@ Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
    command and returns the earlier round's result with `correction_joint_jump_rad`.
    Replayed in the sim: run 4's staging (jump 1.54 rad) and the grip staging pose
    (0.59 rad) stop after the first round at 2-3 cm; ordinary rounds (5 cm up, 3 cm
-   forward, hand turned -30 and -45 deg) moved joints 0.06-0.2 rad and still ran. The bottle stayed upright but slid 5 cm. SAM3 returned a 0.22 m
-   box (score 0.04) that the recipe says to reject; the agent never used it.
+   forward, hand turned -30 and -45 deg) moved joints 0.06-0.2 rad and still ran. The
+   bottle stayed upright but slid 5 cm. SAM3 returned a 0.22 m box (score 0.04) that the
+   recipe says to reject; the agent never used it.
+5. With the correction guard (same task, bottle at torso x 0.36, y -0.04): **done**. Sim
+   truth: the bottle rose 5.1 cm, ended upright 0.7 cm from its start in the world, and
+   tilted at most 0.96 upright. The first close (site at 0.372, -0.062, 0.086) slipped on
+   the lift; the agent opened, went 2 cm lower (0.36, -0.05, 0.065), closed again, and
+   the lift held. 31 tool calls, 87k tokens, about 4 min. Open points:
+   - Staging move (0.229, -0.248, 0.16): its second correction round went 1.1 to 7.6 cm
+     while SONIC yawed the torso 13 deg; the stall check stopped it, without a swing. The
+     guard did not fire, since the joints jumped less than 0.5 rad.
+   - The torso-frame bottle position drifted from y -0.09 to 0.00 over five localizations
+     (the torso yawed 33 to 22 to 29 deg) while the bottle stayed put in the world; the
+     agent re-localized before each approach, which kept it on target.
+   - The uncommanded left hand rested on the case (1-5 N) from the fourth move on and
+     pressed it at 33 N during the final Home (left index finger base).
+   - Startup Home ended unverified (residuals 0.059 / 0.057 rad against 0.03).
 
 ### Sim2sim (SONIC MuJoCo loop)
 
