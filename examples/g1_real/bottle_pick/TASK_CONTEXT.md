@@ -51,6 +51,8 @@ counts full successes (touch, close, lift 3 cm or more, set down upright) out of
    it is an object.
 2. Approach from above in the `torso` frame: a pre-grasp pose above and slightly
    short of the bottle, then a bounded descent to side contact. Keep fingers open.
+   Grasp the body, at its localized center or up to 2 cm above it; never the
+   shoulder, neck or cap, which are narrower and tip the bottle when pulled.
 3. Close with `cap_close_gripper(arm="right")`: it closes in steps, stops when the
    fingers meet the bottle and squeezes lightly. `contact: false` means the hand
    closed on nothing; open with `cap_open_gripper` and correct the approach. For a
@@ -58,9 +60,17 @@ counts full successes (touch, close, lift 3 cm or more, set down upright) out of
    order, at most 0.25 rad per message). Finger closure alone is not a grasp.
    Near contact the hand hides the bottle from `ego_view`; judge the grasp from an
    extra view (`third_view`) when the station has one.
-4. Lift a few centimetres. Verify the bottle follows from the returned image and the
-   wrist joint change; a closure value or successful motion is not proof.
-5. Move to the place spot, lower in bounded steps, open the hand with
+4. Lift by the requested height in one vertical move. Judge the lift by the bottle,
+   not the hand: in `third_view` its base is clear of the case top. SONIC lands the
+   hand 2 to 4 cm off its target, so the measured hand rise differs from the command.
+   Accept a lift within about 2 cm of the request and do not re-command the height
+   while holding: every extra move with the bottle in hand risks the grip (in sim run
+   7 a 0.8 cm "correction" lost the bottle). A closure value or a successful motion
+   is not proof of a lift.
+5. While holding, move in separate straight segments: up first, then across, then
+   down. Never combine a sideways and an upward move near the case edge, and never
+   drag the bottle across the case top.
+   Move to the place spot, lower in bounded steps, open the hand with
    `cap_open_gripper`, back the hand away from the bottle, raise it 10 to 15 cm
    above the box before any other move (the planner does not know the box is there), and
    inspect that the bottle stands.
@@ -69,9 +79,12 @@ counts full successes (touch, close, lift 3 cm or more, set down upright) out of
 ## Recovery
 
 A refusal "outside the configured limits" establishes no movement; change the
-target or staging pose. If the bottle slips or tips, keep the arm still, relocate the
-bottle from a fresh view, and regrasp with a different closure or approach. Do not
-loosen tolerances or push through suspected contact.
+target or staging pose. If the bottle slips but still stands on the case, lower the
+hand until the bottle rests, open the hand, back away 8 cm along -y, localize again and
+regrasp on the body from a fresh approach. Do not re-close higher up to "tighten" the
+grip: a close near the neck followed by a move tipped the bottle off the case in sim
+run 7. If the bottle tips or falls, keep the arm still and report. Do not loosen
+tolerances or push through suspected contact.
 
 ## Completion and safety
 

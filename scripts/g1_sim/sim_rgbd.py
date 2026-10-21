@@ -100,6 +100,9 @@ def build_model(path: str, *, objects: bool, yaw_deg: float = 0.0) -> mujoco.MjM
         spec.body("pelvis").quat = [math.cos(half), 0.0, 0.0, math.sin(half)]
     if objects:
         _add_objects(spec)
+    # MuJoCo's soft friction lets a held bottle creep down the fingers (0.8-1.0 cm per 6 s
+    # of still hold, which run 7's agent read as a slip); a noslip pass stops it (+-0.04 cm).
+    spec.option.noslip_iterations = 3
     base = Path(path).resolve().parent
     for attr in ("meshdir", "texturedir"):
         value = getattr(spec, attr)

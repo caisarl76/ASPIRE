@@ -383,7 +383,17 @@ Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
    came back down onto the case and out of the grip, a second close near the neck and a
    diagonal move (6 cm forward, 5 cm up) tipped it off the case to the floor beside the
    left foot. The agent rejected a localization that found the hand, reported the task
-   incomplete and went Home. Why the 0.8 cm move lost the grip is not yet known.
+   incomplete and went Home. Why the 0.8 cm move lost the grip: the bottle crept down
+   the fingers while held still, 0.8-1.0 cm per 6 s (3 runs of grip, lift, 0.8 cm down,
+   6 s hold), so it was already back on the case after the agent's pauses. That creep is
+   MuJoCo's soft friction (pyramidal cone, impratio 1, no noslip), not the grip: with
+   `noslip_iterations = 3`, now set in `sim_rgbd.py`, the same hold slipped -0.04 to
+   0.01 cm (elliptic cone with impratio 10: 0.04-0.15 cm, but it lost the bottle in the
+   move). Squeeze re-measured with noslip: 0.15 lifted 2/4, 0.25 4/4, 0.35 2/2; 0.35 stays.
+   The bottle pick recipe now says to accept a lift within about 2 cm instead of
+   correcting it while holding, to grasp the body (never shoulder, neck or cap), to move
+   up, across and down in separate segments, and to regrasp a slipping bottle from a
+   fresh approach instead of re-closing higher up.
 
 ### Sim2sim (SONIC MuJoCo loop)
 
