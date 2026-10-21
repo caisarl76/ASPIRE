@@ -296,6 +296,41 @@ right hand 5 cm up at 8 mm, Dex3 close on nothing and open, SAM3 localizes the b
 right at server startup (ZMQ slow joiner); the body client now waits 1 s after binding
 and the first engage resends `start` every 2 s until feedback arrives.
 
+### Sim experiments (`scripts/g1_sim/experiments.py`)
+
+Run against `scripts/g1_sim.sh up` (no CAP server on the sim's port). Verdicts come
+from the sim's truth (object poses, robot-object contacts on every physics step).
+Results, 2026-10-21:
+
+| Experiment | Result |
+| --- | --- |
+| `engage` (fresh deploy, then drop) | standing hold still (0.10 rad/s peak) and within SONIC's offset (0.135 rad). While hanging on the band SONIC swings the arms up to 9 rad/s, so the first engage's wait for still arms runs its full 5 s: on the harness keep the feet on the ground or drop promptly. |
+| `heading` (`G1_SIM_YAW_DEG=60`) | heading holds (+4 deg) through engage and drop; with the pre-fix facing (`--legacy-heading`) the sim turns the robot 60 deg back, reproducing the robot's turn-on-engage |
+| `retreat` | from 10 cm over the case the old straight Home hits it (fingers and wrist, 16-19 N); the retreating Home does not (10.7 s instead of 3.3 s) |
+| `grip` | palm contact at the palm center, contact-aware close, lift: with 0.08 squeeze the 0.5 kg bottle slipped; with 0.15 (now the default) 3 of 3 lifted it 3.7-5.1 cm and set it down upright |
+| `outage` (feedback cut 2 s while SONIC runs) | motion refused as stale; the arms move 0.08 rad when feedback returns; re-engage moves them 0.035 rad; motion works again |
+| `curobo` (live depth scene) | from Home cuRobo refuses (the hand starts below the case top beside its face); after an interpolation lift every leg plans and runs with no case contact. Plans right after a long move were refused as stale under the 0.02 rad start check; `move_to_pose` now re-plans |
+| `lean` | reaching 0.25-0.48 m out tilts the torso 1-2 deg, but SONIC shifts the stance sideways: a fixed object moves up to 4.5 cm in the torso frame |
+| acceptance (`--station g1-sim`) | hold 0.11 rad; segments 5 of 10 within 15 mm, the returns to the start pose plateau near 32 mm (SONIC tracking; real robot: 0.11 rad, 38 mm) |
+
+Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
+1. The hand hid the bottle from `ego_view`, the first contact was a finger base at
+   1-2 N the agent could not see, and its approach steps pushed the bottle 3 cm and off
+   the case. The sim deploy publishes no hand torques, so a third-person camera
+   (`camera.aux_roles`, `third_view` in sim) was added and the recipes say to judge
+   contact from it and stop when no view shows it.
+2. With `third_view`: the fingertips struck the case top (18-21 N) and the middle
+   finger tipped the bottle. Posture tool and leg guard added afterwards.
+3. With the posture tool and leg guard: the bottle stayed upright on the case, the
+   only contacts were 3 N (a right finger base on the bottle, fingertips on the case)
+   and an 11 N left index fingertip on the case. The agent reported the touch as
+   unverified and stopped: cuRobo refused two approach goals as `scene_collision` (the
+   bottle and case are one depth obstacle, so a palm goal against the bottle collides),
+   and `mink` missed a 1 cm tolerance by 1.9 cm. The leg guard never fired. The torso
+   pitched about 9 deg during startup Home and then held, which alone moves an object
+   0.35 m ahead by 5-6 cm in the torso frame: localize after Home, not before.
+   `watch --summary` now also prints the bottle's world drift and the torso's yaw.
+
 ### Sim2sim (SONIC MuJoCo loop)
 
 Run on the workstation on 2026-10-18 (headless: the MuJoCo viewer on an Xvfb

@@ -360,7 +360,7 @@ def exp_grip(args: argparse.Namespace) -> int:
     try:
         env.engage()
         standing(truth)
-        sim("reset")
+        sim("reset", *(str(v) for v in args.bottle_xy or ()))
         time.sleep(2.0)
         api.go_home(arm="both")
         api.open_gripper(arm="right")
@@ -660,6 +660,16 @@ def exp_watch(args: argparse.Namespace) -> int:
         f"ends {(bottle[-1] - bottle[0]) * 100} cm from its start (torso frame), "
         f"min upright {min(upright):.2f}, final upright {upright[-1]:.2f}"
     )
+    world = np.array([r["aspire_bottle_world"] for r in rows if "aspire_bottle_world" in r])
+    if len(world):  # torso-frame drift minus this = the robot moving, not the bottle
+        print(f"bottle in the world: ends {((world[-1] - world[0]) * 100).round(1)} cm from its start")
+    torso = np.array([r["torso_world"] for r in rows if "torso_world" in r])
+    if len(torso):
+        span = torso.max(0) - torso.min(0)
+        print(
+            f"torso: moved {(span[:3] * 100).round(1)} cm, pitch/roll/yaw spans "
+            f"{span[3:].round(1)} deg"
+        )
     for obj, links in contacts.items():
         print(
             f"contacts with {obj}: " + ", ".join(f"{k} {v:.0f} N" for k, v in sorted(links.items()))
@@ -687,6 +697,9 @@ def main() -> int:
     )
     parser.add_argument(
         "--squeeze", type=float, help="grip: closure past contact (default: the adapter's)"
+    )
+    parser.add_argument(
+        "--bottle-xy", type=float, nargs=2, help="grip: bottle position on the case (torso frame)"
     )
     args = parser.parse_args()
     return globals()[f"exp_{args.experiment}"](args)

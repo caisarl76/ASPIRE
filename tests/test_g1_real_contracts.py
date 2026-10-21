@@ -28,6 +28,7 @@ def test_g1_real_extension_names_are_approved():
             "g1_real.get_controller_metadata",
             "g1_real.set_hand_joints",
             "g1_real.get_hand_state",
+            "g1_real.get_posture",
         }
     )
     ToolRegistry(public_extension_allowlist=G1_REAL_PUBLIC_TOOL_NAMES)

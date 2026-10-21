@@ -133,6 +133,10 @@ Applies when the capability graph shows `g1_real` (operator runbook: `docs/g1-re
   sits below the work surface next to it, and cuRobo refuses that narrow start (sim):
   first lift the hand straight up above the surface with `interpolation` (handshake
   orientation `[1, 0, 0, 0]` reaches), then plan with cuRobo.
+  The object you want to touch is part of that depth scene too, so a goal at or in
+  contact with it is refused as `goal state infeasible (scene_collision)`. Plan with
+  cuRobo only to a pre-contact pose 5 to 8 cm off the object's near face, then make
+  the final approach and any contact in short `interpolation` moves.
 - **Extra camera views.** A station may list image-only cameras next to `ego_view`
   (the sim has `third_view`, a fixed camera ahead and to the right). They show the
   hand and the object from the side, which is what the head camera loses once the
