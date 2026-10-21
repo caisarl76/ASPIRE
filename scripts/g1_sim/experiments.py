@@ -389,6 +389,12 @@ def exp_grip(args: argparse.Namespace) -> int:
             touched = truth.touches("aspire_bottle", since, prefix="right_")
             if touched:
                 break
+        if touched and args.past_contact > 0:
+            # keep pressing in so the palm, not just the finger base, meets the bottle
+            step += args.past_contact
+            move(api, site - (0.08 - step) * n)
+            time.sleep(0.3)
+            touched = truth.touches("aspire_bottle", since, prefix="right_")
         first = max(touched, key=lambda link: touched[link][0]) if touched else None
         rows.append(
             (
@@ -409,6 +415,10 @@ def exp_grip(args: argparse.Namespace) -> int:
                 None if first is None else palm_or_fingers,
                 f"strongest {first} at {touched[first][1:] if first else '-'} in the link",
             )
+        )
+        rows.append(
+            ("bottle upright before close", truth.latest.get("aspire_bottle_upright", 1.0) > 0.9,
+             f"upright {truth.latest.get('aspire_bottle_upright')}")
         )
         start_z = truth.position("aspire_bottle")[2]
         closing = time.monotonic()
@@ -690,6 +700,9 @@ def main() -> int:
     )
     parser.add_argument(
         "--out", default="/tmp/aspire-g1-sim-watch.jsonl", help="watch: the JSONL file"
+    )
+    parser.add_argument(
+        "--past-contact", type=float, default=0.0, help="grip: approach this far (m) past first contact"
     )
     parser.add_argument("--seconds", type=float, default=3600.0, help="watch: stop after this long")
     parser.add_argument("--summary", action="store_true", help="watch: only summarize --out")
