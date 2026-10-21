@@ -404,6 +404,16 @@ Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
    correcting it while holding, to grasp the body (never shoulder, neck or cap), to move
    up, across and down in separate segments, and to regrasp a slipping bottle from a
    fresh approach instead of re-closing higher up.
+8. Everything above in place (feet-down start, held heading, correction guard, squeeze
+   0.35, noslip, updated recipe; bottle at torso x 0.36, y -0.06): failed. The agent
+   put the grasp site at x 0.375, about the bottle's own x, so the palm sat about 5 cm
+   behind the bottle's center (site = palm contact + 0.06 f). The close tipped the
+   bottle to upright 0.78 and pulled it 4-5 cm toward the robot, the "lift" dragged it
+   further (bottle up at most 1.0 cm), and the agent read the side view as "lifted clear,
+   about 4-5 cm". It set the bottle down 13 cm toward the robot, at the case's near
+   edge, and it fell to the floor when the hand opened. The agent stopped and reported
+   the task incomplete. The pick recipe gives no site position for the grasp; the
+   agent's site was 3-4 cm ahead of the bottle in runs 6 and 7 and 1 cm in run 8.
 
 ### Sim2sim (SONIC MuJoCo loop)
 
