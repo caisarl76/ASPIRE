@@ -387,6 +387,11 @@ Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
    9.3 deg, no left-hand contact, bottle up 5.8 cm, back upright 1.5 cm from its start;
    the first close slid again and the second held. `hold_heading` is on in `g1-sim`
    only; enable it on a real profile after a check with the robot hanging.
+   A reach rehearsal then turned the sim robot 30-45 deg and walked it 30 cm when a new
+   process engaged an already-running deploy: the hold kept the heading in the planner
+   frame, which the deploy resets on every start. It now keeps the IMU yaw and sends it
+   relative to the current reference. Replay, three processes engaging one running
+   deploy: heading span 0.3-0.7 deg, travel at most 0.2 cm, no warnings.
 7. With grip squeeze 0.35 (bottle at torso x 0.37, y -0.06): the first close and lift
    held (bottle up 5.6 cm; runs 5 and 6 slipped here). The task then failed. Reading a
    7.3 cm measured hand rise, the agent "corrected" the height 0.8 cm down, the bottle
