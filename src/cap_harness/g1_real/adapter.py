@@ -36,9 +36,10 @@ GRIP_STEP = 0.05
 GRIP_SETTLE_S = 0.15
 GRIP_CONTACT_LAG_RAD = 0.15  # per moving joint
 GRIP_CONTACT_JOINTS = 2  # blocked joints that count as contact
-GRIP_SQUEEZE = (
-    0.15  # closure past the contact point; in sim 0.08 let a 0.5 kg bottle slip, 0.15 lifts it
-)
+# Closure past the contact point. Sim, 0.5 kg bottle, fingers-first contact at closure ~0.6:
+# 0.15 lifted 0/4 (it slipped in agent runs 5 and 6), 0.25 4/4 (4.0-4.7 cm of 5), 0.35 4/4
+# (4.4-5.0 cm), none tipping the bottle. Check the squeeze force on the real Dex3.
+GRIP_SQUEEZE = 0.35
 
 
 class G1RealAdapter(YamRealAdapter):

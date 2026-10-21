@@ -337,7 +337,8 @@ def test_close_gripper_stops_at_contact_and_squeezes_lightly(monkeypatch):
         assert codec.hand_scalar(right_hand, hand.open, hand.closed) == pytest.approx(
             result.diagnostics["gripper_position"]
         )
-        assert result.diagnostics["gripper_position"] > 0.4  # not driven to full close
+        # not driven to full close (0): open fraction left after contact plus squeeze
+        assert result.diagnostics["gripper_position"] >= 0.6 - GRIP_SQUEEZE - GRIP_STEP - 1e-9 > 0
     finally:
         adapter.close()
 
