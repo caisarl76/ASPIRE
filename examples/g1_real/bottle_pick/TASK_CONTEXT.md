@@ -61,6 +61,10 @@ counts full successes (touch, close, lift 3 cm or more, set down upright) out of
    Raise the hand above the bottle top first, move to `S - (0, 0.08, 0)` (8 cm to the
    right), descend there, then approach along +y in steps of at most 2 cm until the
    fingers or palm touch the bottle. Keep the fingers open.
+   **Command `S` exactly as computed, from the latest localization:** every approach
+   step keeps x and z at `S` and changes only y. Do not round or shift x back toward the
+   bottle. In sim run 9, sites 2-3 cm short of `Ax + 0.06` pulled the bottle toward the
+   robot on two closes; the third, at exactly `Ax + 0.06`, held.
 3. Close with `cap_close_gripper(arm="right")`: it closes in steps, stops when the
    fingers meet the bottle and squeezes lightly. `contact: false` means the hand
    closed on nothing; open with `cap_open_gripper` and correct the approach. For a
