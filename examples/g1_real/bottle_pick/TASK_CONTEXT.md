@@ -49,10 +49,18 @@ counts full successes (touch, close, lift 3 cm or more, set down upright) out of
 1. Localize the bottle with `cap_localize_object` in `ego_view`. Reject a mask on the
    wrong object or implausible depth/size. Localize the place spot the same way when
    it is an object.
-2. Approach from above in the `torso` frame: a pre-grasp pose above and slightly
-   short of the bottle, then a bounded descent to side contact. Keep fingers open.
-   Grasp the body, at its localized center or up to 2 cm above it; never the
-   shoulder, neck or cap, which are narrower and tip the bottle when pulled.
+2. Side grasp from the bottle's right, hand level, thumb up, palm facing +y
+   (`quaternion_wxyz` `[1, 0, 0, 0]`). `cap_move_to_pose` places the grasp site 6 cm
+   ahead of the palm, so for a bottle axis `A = (Ax, Ay)` and radius 0.033 m the grasp
+   site goes at **`S = (Ax + 0.06, Ay - 0.053, z)`**: the palm then meets the bottle on
+   its center line. A site at the bottle's own x puts the palm about 5 cm behind the
+   bottle, and closing tips it and pulls it toward the robot (sim run 8). For a turned
+   hand use the formula in the palm touch recipe (`a = 0.06`, `b = 0.02` for Dex3).
+   Take `z` at the body's localized center or up to 2 cm above it; never the shoulder,
+   neck or cap, which are narrower and tip the bottle when pulled.
+   Raise the hand above the bottle top first, move to `S - (0, 0.08, 0)` (8 cm to the
+   right), descend there, then approach along +y in steps of at most 2 cm until the
+   fingers or palm touch the bottle. Keep the fingers open.
 3. Close with `cap_close_gripper(arm="right")`: it closes in steps, stops when the
    fingers meet the bottle and squeezes lightly. `contact: false` means the hand
    closed on nothing; open with `cap_open_gripper` and correct the approach. For a
@@ -60,8 +68,14 @@ counts full successes (touch, close, lift 3 cm or more, set down upright) out of
    order, at most 0.25 rad per message). Finger closure alone is not a grasp.
    Near contact the hand hides the bottle from `ego_view`; judge the grasp from an
    extra view (`third_view`) when the station has one.
+   Before lifting, check in `third_view` that the close left the bottle upright and
+   where it stood. If it tilted or moved toward the robot, the grasp is off center:
+   open the hand, back away 8 cm along -y, localize again and re-approach with the
+   site from step 2. Do not lift a tilted bottle.
 4. Lift by the requested height in one vertical move. Judge the lift by the bottle,
-   not the hand: in `third_view` its base is clear of the case top. SONIC lands the
+   not the hand: in `third_view` there is a visible gap between its base and the case
+   top, and the bottle is upright. A bottle dragged or tilted with the hand is not
+   lifted (sim run 8 read one as "lifted clear"). SONIC lands the
    hand 2 to 4 cm off its target, so the measured hand rise differs from the command.
    Accept a lift within about 2 cm of the request and do not re-command the height
    while holding: every extra move with the bottle in hand risks the grip (in sim run
