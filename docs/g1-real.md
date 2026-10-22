@@ -440,6 +440,14 @@ Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
     front shell, toward the camera from the axis. Run 9's third close landed at 0.42 by
     chance. The touch recipe's "within about 1 cm on the robot" has no recorded
     measurement; the real bottle is clear plastic, which the D435 sees differently.
+11. With the recipes pushing the localized center 0.03 m farther from the robot to the
+    axis: **done on the first close**. The agent computed axis = c + 0.03 u and the site
+    from it exactly (site x about 0.42); one close held through a 5.2 cm lift (bottle
+    leaned to upright 0.98 at worst), and it set the bottle down upright and released
+    it. 23 tool calls, 102k tokens, 196 s (run 9: 39 calls, 345 s). The bottle ended
+    3.1 cm toward the robot from its start in the world; the agent put it back where the
+    hand had lifted it, not where the bottle had stood. Heading span 9 deg; Home
+    unverified (0.079 / 0.101 rad).
 
 ### Sim2sim (SONIC MuJoCo loop)
 
