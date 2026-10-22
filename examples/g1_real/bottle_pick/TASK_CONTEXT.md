@@ -100,14 +100,12 @@ counts full successes (touch, close, lift 3 cm or more, set down upright) out of
    above the box before any other move (the planner does not know the box is there), and
    inspect that the bottle stands.
    **"Put it back where it was":** keep the corrected axis `A0` from the first
-   localization, and place the hand at that grasp site again. The bottle can still end
-   off its spot: it shifts inside the grip during the close and the lift (sim run 11:
-   3.5 cm toward the robot, with the hand on target and the torso still), and nothing
-   measures that before release (SAM3's center jumps once the hand is in view). So
-   after releasing and backing away, localize again and correct the center as in
-   step 1. If the new axis is more than 2 cm from `A0` and the bottle stands, grasp it
-   again at the new site, lift 1 to 2 cm, move the hand horizontally by `A0 - A`, set
-   it down and release. Do this once, then report the remaining offset.
+   localization and place the hand at that grasp site again. Expect the bottle to end
+   2 to 3 cm from its spot: it shifts inside the grip during the close and the lift
+   (sim run 11: 3.5 cm, with the hand on target), and SAM3's center varies 2 to 3 cm
+   between calls, so a localization cannot measure an error that small. Do not regrasp
+   to correct it (sim run 12: a correction turned 2.2 cm into 4.7 cm). Report the
+   placement as within about 3 cm.
 6. Report the result and the evidence.
 
 ## Recovery
