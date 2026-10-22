@@ -536,6 +536,11 @@ Home tolerance 0.12): **5/5 succeeded**, no infrastructure failures. Placement 1
 calls, 93k-138k tokens, 227-290 s per run; Home verified in all five (residuals up to
 0.08 rad). Worst moment: in run 4 the bottle, still leaning about 30 deg in the hand,
 touched the case base-first at set-down (upright 0.84) and righted itself within 2 s.
+That lean was already there at the top of the lift (upright 0.88 at +4.9 cm), so it
+came from the grasp and lift, not the set-down. Grip experiment at the recipe's grasp
+height (`--grasp-dz -0.013`), 4 runs each: a one-move set-down tilted the bottle 6.3-9.6
+deg; stopping 1.5 cm above the case for 1.5 s first (`--set-down-pause 1.5`) 7.7-14.1
+deg, so the recipe keeps the one-move set-down.
 
 ### Sim2sim (SONIC MuJoCo loop)
 

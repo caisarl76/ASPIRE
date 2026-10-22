@@ -474,11 +474,23 @@ def exp_grip(args: argparse.Namespace) -> int:
         rows.append(
             ("bottle lifted with the hand", lifted > 0.03, f"bottle rose {lifted * 100:.1f} cm")
         )
-        move(
-            api,
-            hand(env) - [0.0, 0.0, 0.05],
-            env.get_observations("right")["ee_quat"][[3, 0, 1, 2]],
-            tolerance=args.hold_tolerance,
+        setting_down = time.monotonic()
+        quat = env.get_observations("right")["ee_quat"][[3, 0, 1, 2]]
+        if args.set_down_pause > 0:  # stop 1.5 cm above the case, let the swing settle
+            move(api, hand(env) - [0.0, 0.0, 0.035], quat, tolerance=args.hold_tolerance)
+            time.sleep(args.set_down_pause)
+            move(api, hand(env) - [0.0, 0.0, 0.015], quat, tolerance=args.hold_tolerance)
+        else:
+            move(api, hand(env) - [0.0, 0.0, 0.05], quat, tolerance=args.hold_tolerance)
+        time.sleep(0.5)
+        set_down = truth.bottle_since(setting_down)
+        rows.append(
+            (
+                "bottle upright through the set-down",
+                None,
+                "tilt up to "
+                f"{math.degrees(math.acos(min(1.0, min(up for *_, up in set_down)))):.1f} deg",
+            )
         )
         held = truth.bottle_since(lifting)
         tilt = math.degrees(math.acos(min(1.0, min(up for *_, up in held))))
@@ -779,6 +791,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--grasp-dz", type=float, default=0.02, help="grip: grasp height above the body center (m)"
+    )
+    parser.add_argument(
+        "--set-down-pause",
+        type=float,
+        default=0.0,
+        help="grip: stop 1.5 cm above the case this long (s) before the last of the set-down",
     )
     parser.add_argument(
         "--hold-tolerance",

@@ -56,7 +56,9 @@ def score(truth: Path, agent_log: Path, max_placement_m: float) -> dict:
     }
 
 
-def run_once(index: int, out: Path, task: str, timeout_s: float, max_placement_m: float) -> dict:
+def run_once(
+    index: int, out: Path, task: str, timeout_s: float, max_placement_m: float, bottle_xy
+) -> dict:
     run = out / f"run{index:02d}"
     run.mkdir(parents=True, exist_ok=True)
     sh("scripts/g1_sim.sh", "down")
@@ -64,7 +66,7 @@ def run_once(index: int, out: Path, task: str, timeout_s: float, max_placement_m
     (run / "smoke.log").write_text(smoke.stdout + smoke.stderr)
     if smoke.returncode != 0:
         return {"run": index, "error": "smoke failed"}
-    sh("scripts/g1_sim.sh", "reset")
+    sh("scripts/g1_sim.sh", "reset", *(str(v) for v in bottle_xy or ()))
     time.sleep(3.0)
     python = str(ROOT / ".venv-system2/bin/python")
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
@@ -108,10 +110,15 @@ def main() -> int:
     parser.add_argument("--task", default=TASK)
     parser.add_argument("--timeout-s", type=float, default=900.0)
     parser.add_argument("--max-placement-m", type=float, default=0.04)
+    parser.add_argument(
+        "--bottle-xy", type=float, nargs=2, help="bottle position on the case (torso frame)"
+    )
     args = parser.parse_args()
     results = []
     for index in range(1, args.runs + 1):
-        result = run_once(index, args.out, args.task, args.timeout_s, args.max_placement_m)
+        result = run_once(
+            index, args.out, args.task, args.timeout_s, args.max_placement_m, args.bottle_xy
+        )
         results.append(result)
         print(json.dumps(result), flush=True)
     sh("scripts/g1_sim.sh", "down")
