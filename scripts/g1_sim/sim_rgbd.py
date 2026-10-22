@@ -45,8 +45,10 @@ import zmq
 
 ASPIRE_ROOT = Path(__file__).resolve().parents[2]
 PROFILE = ASPIRE_ROOT / "src/cap_harness/configs/g1_real/g1-lab/station.yaml"
-WIDTH, HEIGHT = 640, 480
-REAL_FY_PX = 606.0  # the D435s on both PC2s report fy 604-607 at 640x480
+# The D435's 1280x720 RGB profile keeps its full ~70 deg horizontal view (640x480 crops it
+# to ~56 deg); calibrated FOV 70.238 x 43.135 deg on the .223 D435i, so fx ~ fy ~ 910 px.
+WIDTH, HEIGHT = 1280, 720
+REAL_FY_PX = 910.0
 MAX_DEPTH_M = 4.0  # beyond this the RealSense reports no return
 # Scene, relative to the torso origin at load (the robot faces +x): a 0.84 m case whose
 # top is at torso height with its near face 0.30 m ahead, and a 500 ml bottle on it.
@@ -109,6 +111,8 @@ def build_model(path: str, *, objects: bool, yaw_deg: float = 0.0) -> mujoco.MjM
     if yaw_deg:  # start facing elsewhere (the real robot's heading at init is not zero)
         half = math.radians(yaw_deg) / 2.0
         spec.body("pelvis").quat = [math.cos(half), 0.0, 0.0, math.sin(half)]
+    spec.visual.global_.offwidth = max(spec.visual.global_.offwidth, WIDTH)
+    spec.visual.global_.offheight = max(spec.visual.global_.offheight, HEIGHT)
     if objects:
         _add_objects(spec)
     # MuJoCo's soft friction lets a held bottle creep down the fingers (0.8-1.0 cm per 6 s

@@ -80,12 +80,26 @@ point `sam3_url` / `curobo_url` there (profile fields, or `--sam3-url` /
    before the port binds:
 
    ```bash
-   tmux new-session -d -s gr00t_camera_5555 "cd ~/GR00T-WholeBodyControl && ~/GR00T-WholeBodyControl/.venv_camera/bin/python -u -m gear_sonic.camera.composed_camera --ego-view-camera realsense --realsense-enable-depth --port 5555 > /tmp/gr00t_camera_5555.log 2>&1"
+   tmux new-session -d -s gr00t_camera_5555 "cd ~/GR00T-WholeBodyControl && ~/GR00T-WholeBodyControl/.venv_camera/bin/python -u -m gear_sonic.camera.composed_camera --ego-view-camera realsense --realsense-enable-depth --realsense-color-width 1280 --realsense-color-height 720 --realsense-fps 15 --fps 15 --port 5555 > /tmp/gr00t_camera_5555.log 2>&1"
    tail -f /tmp/gr00t_camera_5555.log   # until "Sensor server running at tcp://*:5555"
    ```
 
    Verified 2026-10-19 from the workstation: 640x480 RGB, aligned depth (all
    pixels valid, 1.2 to 3.0 m in the lab), fx 606.6 / fy 607.1, about 15 Hz.
+
+   **RGB at 1280x720 (2026-10-22, not yet run on the robot):** 640x480 crops the D435's
+   color view to 55.6 deg horizontally; 1280x720 keeps 70.2 deg (calibrated on the .223
+   D435i, camera review in the fork's `docs/artifacts/camera-review-20261019/`). The
+   agent works at a few seconds per step, so frame rate does not limit accuracy;
+   resolution and field of view do (SAM3 masks, localization, what the agent sees).
+   The resolution options need fork commit `8ead375` (`--realsense-color-width/height`,
+   `--realsense-depth-width/height`; defaults unchanged) overlaid on PC2. Both cameras
+   currently link at USB 2 (480 Mb/s), where 1280x720 RGB runs at up to 15 fps, so set
+   `--realsense-fps 15` and the publisher `--fps 15`; on USB 3 it can run at 30. Depth
+   stays 640x480 (78.7 deg wide, so it covers the whole color view) and is aligned to
+   the 1280x720 color image. Check the intrinsics in the first messages (fx and fy
+   about 910) and the delivered rate. Agent images are now sent at up to 1280 px (was
+   960), and the sim renders 1280x720 with the same intrinsics.
 
 3. PC2, deploy; wait for `Init done`:
 
@@ -456,6 +470,16 @@ Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
     lift, shift, set down) it was 4.7 cm off, while the agent estimated 3.3 cm. SAM3's
     center varies 2-3 cm between calls, as much as the error being corrected, and the
     re-grasp shifted the bottle in the hand again. 42 tool calls, 135k tokens, 460 s.
+13. With the correction step removed: done, two grasp cycles (the first close was
+    opened after the bottle moved 2.9 cm), bottle up 5.6 cm, upright at worst 0.95, ended
+    upright 4.3 cm from its start (x -2.7, y +3.3; the y shift came during the lift and
+    put-back). 39 tool calls, 113k tokens, 328 s. Put-back error over runs 11-13: 3.1,
+    2.2 and 4.3 cm.
+14. Sim camera at 1280x720 (fx 910, the D435's full 70 deg RGB view) before an agent run:
+    SAM3 on the bottle, six calls: center minus truth (-3.1 to -3.2, +0.2, +1.7) cm
+    every time, as at 640x480 (the bias is the visible-surface geometry, not the
+    resolution); 43.6k points per mask instead of 18.9k; score 0.07-0.08. Camera
+    messages 11.8 Hz at 7.4 MB; the sim process uses 83% of a core (was 64%).
 
 ### Sim2sim (SONIC MuJoCo loop)
 

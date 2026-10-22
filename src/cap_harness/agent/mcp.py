@@ -177,7 +177,7 @@ def _motion_strategy_input_schema() -> dict[str, Any]:
     )
 
 
-def _encode_jpeg(frame: np.ndarray, *, max_side: int = 960) -> str:
+def _encode_jpeg(frame: np.ndarray, *, max_side: int = 1280) -> str:
     from PIL import Image
 
     array = np.asarray(frame)
