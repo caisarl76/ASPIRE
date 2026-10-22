@@ -542,6 +542,15 @@ height (`--grasp-dz -0.013`), 4 runs each: a one-move set-down tilted the bottle
 deg; stopping 1.5 cm above the case for 1.5 s first (`--set-down-pause 1.5`) 7.7-14.1
 deg, so the recipe keeps the one-move set-down.
 
+Batch 2 (10 runs, same spot): **8/10**. Successes: placement 1.0-3.0 cm, 189-237 s, 18-23
+tool calls, 77k-109k tokens. Batch 3 (5 runs, bottle at x 0.38, y -0.12): **4/5**,
+placement 2.1-3.9 cm, 219-281 s. Over batches 1-3: 17/20. All three failures are the
+same: the grasp holds the bottle with the index and middle fingertips and the thumb tip;
+while held (3.6 cm into the lift in two runs, after 16 s at the top in the third) the
+index finger loses contact, and within about 0.3 s the bottle rotates out between the
+middle finger and the thumb and falls off the case. The agent saw it each time, kept the
+arm still and reported the fall.
+
 ### Sim2sim (SONIC MuJoCo loop)
 
 Run on the workstation on 2026-10-18 (headless: the MuJoCo viewer on an Xvfb
