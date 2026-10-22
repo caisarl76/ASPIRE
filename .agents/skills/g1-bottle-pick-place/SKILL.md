@@ -21,8 +21,10 @@ as one script, so you do not plan moves yourself. Your job is only:
    - Otherwise (bottle tipped, fell, out of view, or a refusal): keep the arm still and
      report the failure with the report's `reason`. Do not improvise moves.
 
-Expect the bottle to end 1.5 to 3 cm from its start (it shifts in the grip); that is a
-success. The routine takes about one minute.
+Expect the bottle to end 1.5 to 4 cm from its start (it shifts in the grip); that is a
+success. A `warning` with `ok: true` (a finger lost contact during the lift, the bottle was
+still put back) is still a success: do not retry, because a second pick moves the bottle
+further from its spot. The routine takes about one minute.
 
 ```javascript
 const LIFT_M = 0.05, QUERY = "water bottle";
@@ -72,7 +74,10 @@ try {
     report.finger_change_rad = +Math.max(...fingers.map((q, i) => Math.abs(q - dg.hand_q[i]))).toFixed(3);
     // Sim: a held lift moves the fingers 0.04-0.05 rad from the settled grip; a hand that lost the
     // bottle closes on toward its command (an empty hand ends ~0.8 rad from the holding pose).
-    const holding = report.finger_change_rad < 0.15;
+    // 0.15-0.45: one finger (usually the index) lost contact but the bottle stayed in the hand
+    // and was put back (sim: 0.18 and 0.29, both lifts fine). 0.45 is an estimate for a drop.
+    const dropped = report.finger_change_rad >= 0.45;
+    if (report.finger_change_rad >= 0.15 && !dropped) report.warning = "a finger lost contact during the lift";
     await move(H.position, H.quaternion_wxyz);               // straight back down
     const open = J(await tools.mcp__cap__cap_open_gripper({ arm: "right" }));
     report.hand_open = +open.job.result.terminal_state.gripper_positions.right.toFixed(3);
@@ -81,13 +86,14 @@ try {
     try { const { c: c1 } = await locate(); report.c1 = c1.map((v) => +v.toFixed(3));
       report.offset_m = +Math.hypot(c1[0] - c[0], c1[1] - c[1]).toFixed(3); } catch (e) { report.relocalize = String(e); }
     for (const im of (await tools.mcp__cap__observe({ cameras: ["ego_view", "third_view"] })).content ?? []) if (im.type === "image") image(im);
-    if (!holding) done("the bottle slipped out during the lift", true);
+    if (dropped) done("the bottle slipped out during the lift", true);
     else { report.ok = true; done("lifted and put back"); }
   }
 } catch (e) { done(String(e)); }
 ```
 
 The routine uses only registered CAP tools. `REPORT` fields: `close.contact`, `hand_rise_m`
-(the hand's measured rise), `finger_change_rad` (above 0.15 means the bottle slipped out),
+(the hand's measured rise), `finger_change_rad` (0.15 to 0.45: a finger lost contact but the
+bottle stayed; 0.45 and above: it slipped out),
 `hand_open`, `offset_m` (the bottle's estimated distance from its start; SAM3 noise is 2 to 3
 cm), and every move with its error.
