@@ -509,6 +509,17 @@ Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
     open and retreat, with the bottle's start marked, were made from the agent's tool
     images.
 
+Grasp height (grip experiment, `--grasp-dz`, held with `--hold-tolerance 0.01` like the
+agent, bottle at x 0.36, y -0.06, 3 runs each; the new "bottle steady in the hand" and
+"bottle back at its spot" rows): grasping 2 cm below the body center tilted the bottle
+7.3-9.6 deg while held, swung it 2.5-3.4 cm and put it back 1.5-2.1 cm off; at the center
+8.5-12.6 deg, 2.8-3.5 cm, 1.5-1.7 cm; 2 cm above 12.0-12.3 deg, 3.9-4.7 cm, 2.2-5.5 cm;
+4 cm above 10.6-12.6 deg, 3.3-3.5 cm, 1.6-2.9 cm. At 2 cm above with a 4 cm tolerance (no
+correction rounds while holding) the tilt was the same (12.0-12.8 deg), so the rounds do
+not cause it. The agent grasped at the returned center, which sits 1.7 cm above the body
+center: the worst band. The pick recipe now takes z = cz - 0.03. `scripts/g1_sim/
+agent_batch.py` runs the agent N times on fresh sims and scores each run by sim truth.
+
 ### Sim2sim (SONIC MuJoCo loop)
 
 Run on the workstation on 2026-10-18 (headless: the MuJoCo viewer on an Xvfb

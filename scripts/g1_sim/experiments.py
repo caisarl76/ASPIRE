@@ -68,6 +68,7 @@ class SimTruth:
         self._lock = threading.Lock()
         self.latest: dict = {}
         self._contacts: list[tuple[float, dict]] = []
+        self._bottle: list[tuple[float, np.ndarray, float]] = []  # t, world xyz, upright
         self._stop = threading.Event()
         threading.Thread(target=self._run, daemon=True).start()
 
@@ -84,6 +85,14 @@ class SimTruth:
                 self.latest = truth
                 if truth.get("contacts"):
                     self._contacts.append((time.monotonic(), truth["contacts"]))
+                if "aspire_bottle_world" in truth:
+                    self._bottle.append(
+                        (
+                            time.monotonic(),
+                            np.asarray(truth["aspire_bottle_world"], dtype=float),
+                            float(truth.get("aspire_bottle_upright", 1.0)),
+                        )
+                    )
 
     def position(self, name: str) -> np.ndarray:
         deadline = time.monotonic() + 5.0
@@ -104,6 +113,11 @@ class SimTruth:
                         if link.startswith(prefix) and hit[0] >= peak.get(link, [0.0])[0]:
                             peak[link] = list(hit)
         return peak
+
+    def bottle_since(self, since: float) -> list[tuple[float, np.ndarray, float]]:
+        """The bottle's world position and uprightness (cos of its tilt) since ``since``."""
+        with self._lock:
+            return [row for row in self._bottle if row[0] >= since]
 
     def close(self) -> None:
         self._stop.set()
@@ -374,7 +388,7 @@ def exp_grip(args: argparse.Namespace) -> int:
         time.sleep(2.0)
         api.go_home(arm="both")
         api.open_gripper(arm="right")
-        axis = truth.position("aspire_bottle") + [0.0, 0.0, 0.02]  # a little above the body center
+        axis = truth.position("aspire_bottle") + [0.0, 0.0, args.grasp_dz]
         f, n = np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0])
         a, b = DEX3_PALM
         contact_target = axis - BOTTLE_RADIUS_M * n
@@ -434,6 +448,7 @@ def exp_grip(args: argparse.Namespace) -> int:
             )
         )
         start_z = truth.position("aspire_bottle")[2]
+        start_world = np.asarray(truth.latest["aspire_bottle_world"], dtype=float)
         closing = time.monotonic()
         close = api.close_gripper(arm="right")
         d = close.diagnostics
@@ -447,7 +462,13 @@ def exp_grip(args: argparse.Namespace) -> int:
             )
         )
         above = hand(env) + [0.0, 0.0, 0.05]
-        move(api, above, env.get_observations("right")["ee_quat"][[3, 0, 1, 2]])
+        lifting = time.monotonic()
+        move(
+            api,
+            above,
+            env.get_observations("right")["ee_quat"][[3, 0, 1, 2]],
+            tolerance=args.hold_tolerance,
+        )
         time.sleep(0.5)
         lifted = truth.position("aspire_bottle")[2] - start_z
         rows.append(
@@ -457,6 +478,18 @@ def exp_grip(args: argparse.Namespace) -> int:
             api,
             hand(env) - [0.0, 0.0, 0.05],
             env.get_observations("right")["ee_quat"][[3, 0, 1, 2]],
+            tolerance=args.hold_tolerance,
+        )
+        held = truth.bottle_since(lifting)
+        tilt = math.degrees(math.acos(min(1.0, min(up for *_, up in held))))
+        swing = max(float(np.linalg.norm((w - start_world)[:2])) for _, w, _ in held)
+        rows.append(
+            (
+                "bottle steady in the hand",
+                None,
+                f"tilt up to {tilt:.1f} deg, up to {swing * 100:.1f} cm sideways from its start "
+                "while held",
+            )
         )
         api.open_gripper(arm="right")
         move(api, hand(env) - 0.08 * n)
@@ -467,6 +500,15 @@ def exp_grip(args: argparse.Namespace) -> int:
                 "bottle stands after release",
                 abs(bottle[2] - start_z) < 0.02,
                 f"z change {(bottle[2] - start_z) * 100:+.1f} cm",
+            )
+        )
+        end_world = np.asarray(truth.latest["aspire_bottle_world"], dtype=float)
+        rows.append(
+            (
+                "bottle back at its spot",
+                None,
+                f"{np.linalg.norm((end_world - start_world)[:2]) * 100:.1f} cm from its start "
+                "(world)",
             )
         )
         adapter.go_home(arm="both")
@@ -734,6 +776,15 @@ def main() -> int:
     )
     parser.add_argument(
         "--bottle-xy", type=float, nargs=2, help="grip: bottle position on the case (torso frame)"
+    )
+    parser.add_argument(
+        "--grasp-dz", type=float, default=0.02, help="grip: grasp height above the body center (m)"
+    )
+    parser.add_argument(
+        "--hold-tolerance",
+        type=float,
+        default=0.04,
+        help="grip: move_to_pose tolerance for the lift and set-down (the agent uses 0.01)",
     )
     args = parser.parse_args()
     return globals()[f"exp_{args.experiment}"](args)

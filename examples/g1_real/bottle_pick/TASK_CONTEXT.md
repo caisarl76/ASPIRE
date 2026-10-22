@@ -63,8 +63,12 @@ counts full successes (touch, close, lift 3 cm or more, set down upright) out of
    its center line. A site at the bottle's own x puts the palm about 5 cm behind the
    bottle, and closing tips it and pulls it toward the robot (sim run 8). For a turned
    hand use the formula in the palm touch recipe (`a = 0.06`, `b = 0.02` for Dex3).
-   Take `z` at the body's localized center or up to 2 cm above it; never the shoulder,
-   neck or cap, which are narrower and tip the bottle when pulled.
+   Take **`z = cz - 0.03`**: the returned center sits about 1.7 cm above the body's
+   center (sim), and a grasp just below the body center holds the bottle steadiest. Sim
+   grip sweep, 3 runs each: 2 cm below the body center tilted the bottle 7-10 deg in the
+   hand and put it back 1.5-2.1 cm off; 2 cm above it (where the returned center lands)
+   12 deg and 2.2-5.5 cm. The fingers then clear the case top by about 1 cm. Never grasp
+   the shoulder, neck or cap, which are narrower and tip the bottle when pulled.
    Raise the hand above the bottle top first, move to `S - (0, 0.08, 0)` (8 cm to the
    right), descend there, then approach along +y in steps of at most 2 cm until the
    fingers or palm touch the bottle. Keep the fingers open.
