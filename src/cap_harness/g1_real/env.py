@@ -41,6 +41,7 @@ CONTROL_CONTRACT_VERSION = "g1-sonic-v1-planner-stream"
 KEEP_ALIVE_PERIOD_S = 0.02
 #: Seconds a full open-to-closed hand transition is given when no duration is passed.
 HAND_FULL_TRAVEL_S = 1.0
+HAND_SETTLE_MAX_S = 1.5  # set_gripper waits up to this long for the fingers to stop
 # Home retreat: a hand raised more than RETREAT_ABOVE_HOME_M above its home height
 # (working over a table or a box) first lifts RETREAT_LIFT_M and comes back over its
 # home position at that height, then descends. A straight joint-space Home from
@@ -552,8 +553,36 @@ class G1Env:
         result = self._hand_transition(
             side, codec.hand_pose(goal, hand.open, hand.closed), duration_s, source="cap_gripper"
         )
+        if result.get("success"):
+            result["hand_settled"] = self._wait_hand_still(side)
         result.update({"side": side, "gripper": goal})
         return result
+
+    def _wait_hand_still(self, side: str) -> bool:
+        """Wait until the measured hand stops, up to ``HAND_SETTLE_MAX_S``.
+
+        The command window ends before the fingers do: an open that returned with
+        the hand 66% open let the following retreat drag the bottle 4 cm (sim agent
+        run 15). Still means the mean of the last 0.25 s moved less than 0.01 rad
+        from the 0.25 s before on every finger joint; a hand stopped on an object is
+        still too.
+        """
+        period = 1.0 / float(self.config.controller.command_stream_hz)
+        window = max(1, round(0.25 / period))
+        samples: list[np.ndarray] = []
+        deadline = time.monotonic() + HAND_SETTLE_MAX_S
+        while time.monotonic() < deadline:
+            time.sleep(period)
+            obs = self.body.get_observations()
+            if obs is None:
+                continue
+            samples.append(np.asarray(obs[f"{side}_hand_q"], dtype=np.float64))
+            if len(samples) >= 2 * window:
+                before = np.mean(samples[-2 * window : -window], axis=0)
+                after = np.mean(samples[-window:], axis=0)
+                if float(np.max(np.abs(after - before))) < 0.01:
+                    return True
+        return False
 
     def set_hand_joints(
         self, side: str, joints7: Any, *, duration_s: float | None = None

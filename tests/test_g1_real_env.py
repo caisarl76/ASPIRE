@@ -145,6 +145,16 @@ def test_gripper_scalar_round_trips_through_the_hand(env):
     np.testing.assert_allclose(sent, codec.hand_pose(0.3, hands.open, hands.closed), atol=1e-6)
 
 
+def test_set_gripper_returns_once_the_hand_has_stopped(env):
+    # The command window ends before the fingers do: an open that returned with the hand
+    # 66% open let the retreat drag the bottle 4 cm (sim run 15).
+    env.set_gripper("right", 0.0)
+    env.body.tau_s = 0.25  # a slow hand
+    result = env.set_gripper("right", 1.0)
+    assert result["success"] is True and result["hand_settled"] is True
+    assert env.get_observations("right")["gripper_pos"][0] > 0.9  # no sleep: open on return
+
+
 def test_joint_only_batch_holds_the_measured_hand(env):
     env.set_gripper("right", 0.2)
     time.sleep(0.1)

@@ -489,6 +489,16 @@ Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
     2.7 cm). Carrying the lifted bottle back to the stale `S0` moved it 5 cm sideways.
     Run 11, which lowered the bottle straight down where it was lifted, ended 3.1 cm
     off.
+15. Recipe: lift from and lower back to the hand pose measured at the close. The agent
+    did that (one close, bottle up 4.9 cm, 31 tool calls, 118k tokens, 303 s), but the
+    bottle ended 8.1 cm off: 4.9 cm after lowering (it slid 3.9 cm toward the robot and
+    1.8 cm sideways in the grip during the lift), then 3.9 cm more when the hand backed
+    away. `cap_open_gripper` had returned after 0.84 s with the hand 66% open
+    (`gripper_positions.right` 0.658): `set_gripper` streamed the hand command and
+    returned at the end of the command window, before the fingers caught up, and the
+    thumb, still closing around the bottle, dragged it on the retreat. `set_gripper`
+    now waits until the measured hand is still (window means moving under 0.01 rad, up
+    to 1.5 s) and reports `hand_settled`.
 
 ### Sim2sim (SONIC MuJoCo loop)
 
