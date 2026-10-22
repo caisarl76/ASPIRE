@@ -480,6 +480,15 @@ Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
     every time, as at 640x480 (the bias is the visible-surface geometry, not the
     resolution); 43.6k points per mask instead of 18.9k; score 0.07-0.08. Camera
     messages 11.8 Hz at 7.4 MB; the sim process uses 83% of a core (was 64%).
+    Agent run 14 at 1280x720: done on one close (bottle up 5.7 cm, upright 0.98 at
+    worst), 26 tool calls, 116k tokens, 230 s, but it ended 6.5 cm from its start
+    (x -3.6, y +5.4). As the recipe said, the agent kept the grasp site `S0` from its
+    first localization, re-localized during the approach, and grasped at a site about
+    5 cm away in y: the bottle had not moved, so the torso frame had (the torso
+    shifted and turned as the arm reached; heading span 8.7 deg, torso moved 3.3 /
+    2.7 cm). Carrying the lifted bottle back to the stale `S0` moved it 5 cm sideways.
+    Run 11, which lowered the bottle straight down where it was lifted, ended 3.1 cm
+    off.
 
 ### Sim2sim (SONIC MuJoCo loop)
 
