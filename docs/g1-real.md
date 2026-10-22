@@ -551,6 +551,20 @@ index finger loses contact, and within about 0.3 s the bottle rotates out betwee
 middle finger and the thumb and falls off the case. The agent saw it each time, kept the
 arm still and reported the fall.
 
+Small model with the scripted skill (`.agents/skills/g1-bottle-pick-place`,
+`agent_batch.py --model gpt-5.6-luna --effort low`). First batch, 5 runs: every bottle was
+lifted and left standing, 83-139 s, 30k-70k tokens, but two runs retried after the slip
+check read 0.18 and 0.29 rad: the index finger had lost contact while the bottle stayed
+held (lifted 5.4 and 4.8 cm, put back 3.2-3.6 cm off), and the retries moved it to 5.1 and
+7.1 cm. The skill now reports 0.15-0.45 rad as a partial slip (ok, with a warning). That
+needed a settled close: `close_gripper` now returns once the fingers stop pressing in (they
+moved 0.1-0.3 rad for about a second); a held lift then moves them 0.03 rad. Second batch,
+10 runs: **9/10**, 83-110 s per run (the 10-run baseline batch took 189-237 s), 31k-63k
+tokens (baseline 77k-109k), one close each, placement 0.6-2.7 cm in the successes (baseline
+1.0-3.0). The failure was silent: in run 9 the script and the model reported success, but
+the bottle rose only 1.6 cm and ended 6.4 cm off. It slid down the fingers without the
+fingers closing further, so the finger check (0.09 rad) missed it.
+
 ### Sim2sim (SONIC MuJoCo loop)
 
 Run on the workstation on 2026-10-18 (headless: the MuJoCo viewer on an Xvfb
