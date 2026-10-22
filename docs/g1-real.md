@@ -499,6 +499,15 @@ Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
     thumb, still closing around the bottle, dragged it on the retreat. `set_gripper`
     now waits until the measured hand is still (window means moving under 0.01 rad, up
     to 1.5 s) and reports `hand_settled`.
+16. With the open fix: **done, best placement so far**. One close, bottle up 5.1 cm
+    (upright 0.98 at worst), lowered back to the close's hand pose, released and left
+    upright 2.6 cm from its start (x -2.5, y -0.7). `cap_open_gripper` returned with the
+    hand 0.975 open (run 15: 0.658), and the retreat moved the bottle 0.0 cm (run 15:
+    3.9 cm). The remaining error is the in-hand slip during the lift (x -3.3, y -2.8 at
+    the top, partly undone on the way down). 19 tool calls, 109k tokens, 202 s. Frames
+    of run 15's slip and drag: side view crops around the hand at approach, lift, lower,
+    open and retreat, with the bottle's start marked, were made from the agent's tool
+    images.
 
 ### Sim2sim (SONIC MuJoCo loop)
 
