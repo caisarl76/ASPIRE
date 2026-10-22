@@ -199,7 +199,9 @@ class G1RealAdapter(YamRealAdapter):
             steps += 1
             if not result.ok:
                 return result
-            time.sleep(GRIP_SETTLE_S)
+            # the fingers keep pressing in for about a second (0.1-0.3 rad); report the
+            # settled grip, which later checks compare against
+            self._env.wait_hand_still(side)
         _, *held = self._env.last_command()
         return ExecutionResult(
             ok=True,

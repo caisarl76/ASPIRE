@@ -57,7 +57,13 @@ def score(truth: Path, agent_log: Path, max_placement_m: float) -> dict:
 
 
 def run_once(
-    index: int, out: Path, task: str, timeout_s: float, max_placement_m: float, bottle_xy
+    index: int,
+    out: Path,
+    task: str,
+    timeout_s: float,
+    max_placement_m: float,
+    bottle_xy,
+    agent_options: list[str],
 ) -> dict:
     run = out / f"run{index:02d}"
     run.mkdir(parents=True, exist_ok=True)
@@ -83,7 +89,15 @@ def run_once(
     with (run / "agent.log").open("w") as log:
         try:
             subprocess.run(
-                ["scripts/start_system2_agent.sh", "--robot", "sim", "--allow-motion", "exec", task],
+                [
+                    "scripts/start_system2_agent.sh",
+                    "--robot",
+                    "sim",
+                    "--allow-motion",
+                    *agent_options,
+                    "exec",
+                    task,
+                ],
                 cwd=ROOT,
                 env=agent_env,
                 stdin=subprocess.DEVNULL,
@@ -113,11 +127,21 @@ def main() -> int:
     parser.add_argument(
         "--bottle-xy", type=float, nargs=2, help="bottle position on the case (torso frame)"
     )
+    parser.add_argument("--model", help="codex model (default: ~/.codex/config.toml)")
+    parser.add_argument("--effort", help="codex reasoning effort (default: the config's)")
     args = parser.parse_args()
     results = []
     for index in range(1, args.runs + 1):
+        options = [*(["--model", args.model] if args.model else []),
+                   *(["--effort", args.effort] if args.effort else [])]
         result = run_once(
-            index, args.out, args.task, args.timeout_s, args.max_placement_m, args.bottle_xy
+            index,
+            args.out,
+            args.task,
+            args.timeout_s,
+            args.max_placement_m,
+            args.bottle_xy,
+            options,
         )
         results.append(result)
         print(json.dumps(result), flush=True)

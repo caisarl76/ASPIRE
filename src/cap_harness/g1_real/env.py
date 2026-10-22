@@ -554,11 +554,11 @@ class G1Env:
             side, codec.hand_pose(goal, hand.open, hand.closed), duration_s, source="cap_gripper"
         )
         if result.get("success"):
-            result["hand_settled"] = self._wait_hand_still(side)
+            result["hand_settled"] = self.wait_hand_still(side)
         result.update({"side": side, "gripper": goal})
         return result
 
-    def _wait_hand_still(self, side: str) -> bool:
+    def wait_hand_still(self, side: str) -> bool:
         """Wait until the measured hand stops, up to ``HAND_SETTLE_MAX_S``.
 
         The command window ends before the fingers do: an open that returned with

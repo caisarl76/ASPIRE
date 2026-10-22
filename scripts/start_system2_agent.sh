@@ -3,9 +3,11 @@
 set -euo pipefail
 ASPIRE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$ASPIRE_ROOT/.uv-cache}"
-# Leading options: --robot 222|223|sim (which G1, see start_system2.sh) and --allow-motion.
+# Leading options: --robot 222|223|sim (which G1, see start_system2.sh), --allow-motion, and
+# --model M / --effort E (codex model and reasoning effort; default: ~/.codex/config.toml).
 ASPIRE_ROBOT=""
 ASPIRE_MOTION=0
+ASPIRE_MODEL=()
 while (($#)); do
   case "$1" in
     --robot)
@@ -13,6 +15,8 @@ while (($#)); do
         || { printf -- '--robot must be 222 (Dex3 hands), 223 (rubber hands) or sim\n' >&2; exit 2; }
       ASPIRE_ROBOT="$2"; shift 2 ;;
     --allow-motion) ASPIRE_MOTION=1; shift ;;
+    --model) ASPIRE_MODEL+=(-m "$2"); shift 2 ;;
+    --effort) ASPIRE_MODEL+=(-c "model_reasoning_effort=\"$2\""); shift 2 ;;
     *) break ;;
   esac
 done
@@ -55,7 +59,7 @@ done
 ASPIRE_MODE=()
 if [[ "${1:-}" == "exec" ]]; then ASPIRE_MODE=(exec); shift; fi
 ASPIRE_TASK="${*:-After startup completes, wait for the operator task.}"
-exec codex "${ASPIRE_MODE[@]}" -C "$ASPIRE_ROOT" \
+exec codex "${ASPIRE_MODE[@]}" "${ASPIRE_MODEL[@]}" -C "$ASPIRE_ROOT" \
   -c 'approval_policy="never"' \
   -c 'sandbox_mode="workspace-write"' \
   -c 'sandbox_workspace_write.network_access=true' \

@@ -156,6 +156,8 @@ Applies when the capability graph shows `g1_real` (operator runbook: `docs/g1-re
   lower the hand while it is over a surface except to place or touch. Home does
   this on its own from a raised hand (lift, back over the home position, straight
   down); a `cap_move_to_pose` to a start pose does not.
+- Bottle pick, lift and put back on Dex3 (sim or `.222`): run the scripted
+  [g1-bottle-pick-place](../g1-bottle-pick-place/SKILL.md) skill instead of planning the moves.
 - Task recipes: [bottle pick and place](../../../examples/g1_real/bottle_pick/TASK_CONTEXT.md)
   needs Dex3 hands (PC2 `.222`); [palm touch](../../../examples/g1_real/bottle_touch/TASK_CONTEXT.md)
   works on both robots and says what differs per hand. Read the one that matches the
