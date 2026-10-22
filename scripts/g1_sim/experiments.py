@@ -125,7 +125,13 @@ def sim(command: str, *args: str) -> None:
     )
 
 
-def build(*, camera: bool = False, feedback_port: int | None = None, curobo_url: str | None = None):
+def build(
+    *,
+    camera: bool = False,
+    feedback_port: int | None = None,
+    curobo_url: str | None = None,
+    sam3_url: str | None = None,
+):
     cfg = load_g1_station_config(STATION)
     if feedback_port is not None:
         cfg = replace(cfg, sonic=replace(cfg.sonic, feedback_port=feedback_port))
@@ -156,6 +162,10 @@ def build(*, camera: bool = False, feedback_port: int | None = None, curobo_url:
         )
         options["ik_providers"]["curobo"] = planner
         options["trajectory_planning_providers"] = {"curobo": planner}
+    if sam3_url:
+        from cap_harness.providers.sam3 import Sam3Provider
+
+        options["segmentation_provider"] = Sam3Provider(base_url=sam3_url)
     adapter = G1RealAdapter(env, allow_physical_motion=True)
     api = CapApi(adapter, default_camera=cfg.camera.role, **options)
     return env, adapter, api
@@ -417,8 +427,11 @@ def exp_grip(args: argparse.Namespace) -> int:
             )
         )
         rows.append(
-            ("bottle upright before close", truth.latest.get("aspire_bottle_upright", 1.0) > 0.9,
-             f"upright {truth.latest.get('aspire_bottle_upright')}")
+            (
+                "bottle upright before close",
+                truth.latest.get("aspire_bottle_upright", 1.0) > 0.9,
+                f"upright {truth.latest.get('aspire_bottle_upright')}",
+            )
         )
         start_z = truth.position("aspire_bottle")[2]
         closing = time.monotonic()
@@ -675,7 +688,9 @@ def exp_watch(args: argparse.Namespace) -> int:
     )
     world = np.array([r["aspire_bottle_world"] for r in rows if "aspire_bottle_world" in r])
     if len(world):  # torso-frame drift minus this = the robot moving, not the bottle
-        print(f"bottle in the world: ends {((world[-1] - world[0]) * 100).round(1)} cm from its start")
+        print(
+            f"bottle in the world: ends {((world[-1] - world[0]) * 100).round(1)} cm from its start"
+        )
     torso = np.array([r["torso_world"] for r in rows if "torso_world" in r])
     if len(torso):
         span = torso.max(0) - torso.min(0)
@@ -702,7 +717,10 @@ def main() -> int:
         "--out", default="/tmp/aspire-g1-sim-watch.jsonl", help="watch: the JSONL file"
     )
     parser.add_argument(
-        "--past-contact", type=float, default=0.0, help="grip: approach this far (m) past first contact"
+        "--past-contact",
+        type=float,
+        default=0.0,
+        help="grip: approach this far (m) past first contact",
     )
     parser.add_argument("--seconds", type=float, default=3600.0, help="watch: stop after this long")
     parser.add_argument("--summary", action="store_true", help="watch: only summarize --out")
