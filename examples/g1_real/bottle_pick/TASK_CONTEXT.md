@@ -49,6 +49,13 @@ counts full successes (touch, close, lift 3 cm or more, set down upright) out of
 1. Localize the bottle with `cap_localize_object` in `ego_view`. Reject a mask on the
    wrong object or implausible depth/size. Localize the place spot the same way when
    it is an object.
+   **The returned center is not the bottle's axis.** It is the center of the visible
+   surface, which the camera sees only from the front, so it sits about one radius
+   toward the camera: in the sim, 3.0-3.3 cm short in x and 1.2-1.9 cm high, on every
+   call. Push it 0.03 m farther from the robot along the horizontal line from the
+   torso origin: with `c` the returned center and `u = (cx, cy) / |(cx, cy)|`, the axis
+   is **`A = (cx + 0.03 ux, cy + 0.03 uy)`**. Use `A` in step 2. The real-robot offset
+   (clear bottle, D435) is not measured yet; replace this number when it is.
 2. Side grasp from the bottle's right, hand level, thumb up, palm facing +y
    (`quaternion_wxyz` `[1, 0, 0, 0]`). `cap_move_to_pose` places the grasp site 6 cm
    ahead of the palm, so for a bottle axis `A = (Ax, Ay)` and radius 0.033 m the grasp

@@ -48,9 +48,13 @@ reaches farther; it touches the bottle's rear-right side instead of its right si
 
 1. Localize the bottle in `ego_view` (`"water bottle"`). Reject a mask on the wrong
    object, or a box larger than about 0.12 m across or 0.30 m tall: that is depth
-   smear, not a bottle. Use the returned center as the bottle axis, `A = (cx, cy, z)`;
-   on the robot it lands within about 1 cm. Take `r = 0.033` m for a 500 ml bottle:
-   the returned extents run 1 to 2 cm wider than the bottle.
+   smear, not a bottle. The returned center is the center of the visible front surface,
+   about one radius toward the camera from the axis (sim: 3.0-3.3 cm short in x on
+   every call; real robot not measured yet). Take the axis 0.03 m farther from the
+   robot along the horizontal line from the torso origin:
+   `A = (cx + 0.03 ux, cy + 0.03 uy, z)` with `u = (cx, cy) / |(cx, cy)|`. Take
+   `r = 0.033` m for a 500 ml bottle: the returned extents run 1 to 2 cm wider than
+   the bottle.
 2. Pick a contact height `z` on the bottle's upper half, below the cap, and at least
    0.06 m above the surface it stands on (the hand reaches 0.043 m below the site).
    A higher contact point reaches farther.
