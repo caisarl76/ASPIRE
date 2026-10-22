@@ -73,6 +73,7 @@ class G1ControllerConfig:
     trajectory_start_interp_s: float = 0.0  # blend from the chain target into a batch
     settle_until_still_max_s: float = 0.0  # extend a batch's settle until the arms stop
     leg_clearance_m: float = 0.0  # refuse arm trajectories closer than this to the legs; 0 off
+    home_tolerance_rad: float = 0.03  # go_home's home_verified bound on every arm joint
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,10 +249,13 @@ def load_g1_station_config(
         ),
         trajectory_start_interp_s=float(raw_controller.get("trajectory_start_interp_s", 0.0)),
         settle_until_still_max_s=float(raw_controller.get("settle_until_still_max_s", 0.0)),
+        home_tolerance_rad=float(raw_controller.get("home_tolerance_rad", 0.03)),
         leg_clearance_m=float(raw_controller.get("leg_clearance_m", 0.0)),
     )
     if controller.trajectory_start_interp_s < 0.0:
         raise ValueError("controller.trajectory_start_interp_s must be >= 0")
+    if controller.home_tolerance_rad <= 0.0:
+        raise ValueError("controller.home_tolerance_rad must be > 0")
     if controller.settle_until_still_max_s < 0.0:
         raise ValueError("controller.settle_until_still_max_s must be >= 0")
 

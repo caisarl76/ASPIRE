@@ -82,6 +82,8 @@ class YamRealAdapter:
     residual checks here unchanged.
     """
 
+    home_tolerance_rad = HOME_DIAGNOSTIC_TOLERANCE_RAD  # go_home verifies every joint against it
+
     # Home reports a gripper as open at or above this measured scalar.
     home_gripper_open_min: float = 0.95
 
@@ -859,8 +861,8 @@ class YamRealAdapter:
                     else {}
                 ),
                 "joint_residual_rad": residuals,
-                "home_tolerance_rad": HOME_DIAGNOSTIC_TOLERANCE_RAD,
-                "home_verified": max(residuals.values()) <= HOME_DIAGNOSTIC_TOLERANCE_RAD,
+                "home_tolerance_rad": self.home_tolerance_rad,
+                "home_verified": max(residuals.values()) <= self.home_tolerance_rad,
                 "grippers_open": {
                     side: float(observation.robot_state.gripper_positions[side])
                     >= self.home_gripper_open_min

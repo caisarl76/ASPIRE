@@ -88,6 +88,15 @@ def test_go_home_reports_home_verified(adapter):
     assert result.diagnostics["grippers_open"] == {"left": True, "right": True}
 
 
+def test_go_home_verifies_against_the_profile_tolerance(adapter):
+    # SONIC holds Home 0.04-0.10 rad off (sim), so the YAM's 0.03 never verified on the G1.
+    assert adapter.native_env.config.controller.home_tolerance_rad == pytest.approx(0.12)
+    result = adapter.go_home()
+    assert result.diagnostics["home_tolerance_rad"] == pytest.approx(0.12)
+    residual = max(result.diagnostics["joint_residual_rad"].values())
+    assert result.diagnostics["home_verified"] is (residual <= 0.12)
+
+
 def test_trajectory_residual_fails_when_the_body_lags(adapter):
     adapter.native_env.body.tau_s = 5.0  # arm barely moves
     result = adapter.execute_trajectory(_right_trajectory(adapter, 0.4))

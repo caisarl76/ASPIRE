@@ -520,6 +520,14 @@ not cause it. The agent grasped at the returned center, which sits 1.7 cm above 
 center: the worst band. The pick recipe now takes z = cz - 0.03. `scripts/g1_sim/
 agent_batch.py` runs the agent N times on fresh sims and scores each run by sim truth.
 
+Home verification: every sim agent run ended Home 0.04-0.10 rad off (the robot held 0.11
+in its acceptance), against the YAM's 0.03, so `home_verified` was always false. Joint
+correction rounds after Home (re-command home plus the measured residual, capped at 0.15
+rad), 3 trials: one round took the worst joint from 0.07-0.09 to 0.03-0.06 rad, a second
+did not improve it (0.03-0.075; the wrists keep moving under SONIC). So the G1 profiles
+now set `controller.home_tolerance_rad: 0.12` (default 0.03; the YAM keeps 0.03), which
+still catches a failed Home (1.6 rad in run 4).
+
 ### Sim2sim (SONIC MuJoCo loop)
 
 Run on the workstation on 2026-10-18 (headless: the MuJoCo viewer on an Xvfb
