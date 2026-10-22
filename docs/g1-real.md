@@ -447,7 +447,15 @@ Agent runs in sim (same task: touch, grasp, lift 5 cm, put back, release, Home):
     it. 23 tool calls, 102k tokens, 196 s (run 9: 39 calls, 345 s). The bottle ended
     3.1 cm toward the robot from its start in the world; the agent put it back where the
     hand had lifted it, not where the bottle had stood. Heading span 9 deg; Home
-    unverified (0.079 / 0.101 rad).
+    unverified (0.079 / 0.101 rad). A closer look: the hand stayed on target (measured
+    x 0.420-0.429 in the torso frame) and the torso moved under 1 cm, so the bottle
+    shifted inside the grip, 0.9 cm in the close and 2.6 cm in the lift.
+12. With a placement check after release (localize, then regrasp once if more than 2 cm
+    off): done, but the correction made it worse. Sim truth: 2.2 cm off after the first
+    put-back; the agent's estimate was 3.7 cm. After the one correction (re-grasp, 1.8 cm
+    lift, shift, set down) it was 4.7 cm off, while the agent estimated 3.3 cm. SAM3's
+    center varies 2-3 cm between calls, as much as the error being corrected, and the
+    re-grasp shifted the bottle in the hand again. 42 tool calls, 135k tokens, 460 s.
 
 ### Sim2sim (SONIC MuJoCo loop)
 
