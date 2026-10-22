@@ -99,13 +99,18 @@ counts full successes (touch, close, lift 3 cm or more, set down upright) out of
    `cap_open_gripper`, back the hand away from the bottle, raise it 10 to 15 cm
    above the box before any other move (the planner does not know the box is there), and
    inspect that the bottle stands.
-   **"Put it back where it was":** keep the corrected axis `A0` from the first
-   localization and place the hand at that grasp site again. Expect the bottle to end
-   2 to 3 cm from its spot: it shifts inside the grip during the close and the lift
-   (sim run 11: 3.5 cm, with the hand on target), and SAM3's center varies 2 to 3 cm
-   between calls, so a localization cannot measure an error that small. Do not regrasp
-   to correct it (sim run 12: a correction turned 2.2 cm into 4.7 cm). Report the
-   placement as within about 3 cm.
+   **"Put it back where it was":** after the close, store the measured hand pose `H`
+   (the close's returned `end_effector_poses.right`), lift straight up from `H`, and
+   put the bottle back by lowering straight down to `H`, in its orientation. Do not
+   return to a site computed from an earlier localization: the torso shifts and turns
+   a few cm and degrees as the arm reaches, so torso-frame positions from earlier in
+   the task go stale (sim run 14: the first localization's site was 5 cm from where
+   the bottle was grasped, and returning there moved the bottle 5 cm). Expect the
+   bottle to end 2 to 4 cm from its spot anyway: it shifts inside the grip during the
+   close and the lift (sim run 11: 3.5 cm, with the hand on target), and SAM3's center
+   varies 2 to 3 cm between calls, so a localization cannot measure an error that
+   small. Do not regrasp to correct it (sim run 12: a correction turned 2.2 cm into
+   4.7 cm). Report the placement as within about 4 cm.
 6. Report the result and the evidence.
 
 ## Recovery
