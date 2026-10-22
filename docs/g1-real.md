@@ -528,6 +528,15 @@ did not improve it (0.03-0.075; the wrists keep moving under SONIC). So the G1 p
 now set `controller.home_tolerance_rad: 0.12` (default 0.03; the YAM keeps 0.03), which
 still catches a failed Home (1.6 rad in run 4).
 
+Batch 1 (`agent_batch.py --runs 5`, all of the above in place: feet-down start, held
+heading, correction guard, squeeze 0.35, noslip, 1280x720, open settle, recipe with the
+3 cm center correction, site S, grasp at cz - 0.03, put-back to the close's hand pose,
+Home tolerance 0.12): **5/5 succeeded**, no infrastructure failures. Placement 1.5,
+2.2, 2.4, 2.6, 2.8 cm; rise 5.1-6.6 cm; one close in 4 runs, two in one; 22-29 tool
+calls, 93k-138k tokens, 227-290 s per run; Home verified in all five (residuals up to
+0.08 rad). Worst moment: in run 4 the bottle, still leaning about 30 deg in the hand,
+touched the case base-first at set-down (upright 0.84) and righted itself within 2 s.
+
 ### Sim2sim (SONIC MuJoCo loop)
 
 Run on the workstation on 2026-10-18 (headless: the MuJoCo viewer on an Xvfb
