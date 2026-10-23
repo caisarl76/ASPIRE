@@ -574,6 +574,19 @@ now fails a lift whose SAM3 bottle rise is below 0.6 x the requested height. Sma
 batch with that check, 5 runs: **5/5**, 88-97 s, SAM3 bottle rise 3.9-6.5 cm on every lift
 (no false failures), placement 0.8-2.8 cm.
 
+Index-finger loss (the three falls in batches 1-3). In those runs the index fingertip
+pressed about 1 N for seconds before the lift (batch 2 run 2, which held: 2.5-2.8 N), and
+the grasps were fingertip pinches (index_1, middle_1, thumb_2) with no palm contact, at
+sites the big model chose itself. The grip experiment did not reproduce the drop: 20 s
+holds (`--hold-s 20`) with its contact-stopped approach, with the skill's fixed approach
+(`--fixed-approach`), and stopping 2.5 cm short of the palm (`--site-dy -0.025`), 4-6
+runs each, all held (index 1.5-3.3 N falling to 1.6-2.4 over the hold); every one but the
+short approach also pressed the palm. A per-finger close (each finger group closed until
+blocked, then squeezed past its own contact) was tried and not kept: same index forces,
+one drop in 4 short-approach runs against none for the shared close. With the scripted
+skill's grasp geometry the small model had 0 falls in 20 runs; the slip check flagged a
+finger losing contact in 4 of them, each time with the bottle still held and put back.
+
 ### Speed-up experiment on the robot (prepared, not yet run)
 
 Goal: compare the agent's wall time and success on g1-222 between the current setup and the

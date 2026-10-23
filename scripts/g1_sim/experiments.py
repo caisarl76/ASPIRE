@@ -392,7 +392,7 @@ def exp_grip(args: argparse.Namespace) -> int:
         f, n = np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0])
         a, b = DEX3_PALM
         contact_target = axis - BOTTLE_RADIUS_M * n
-        site = contact_target + a * f - b * n
+        site = contact_target + a * f - b * n + args.site_dy * n
         move(api, [0.25, -0.25, axis[2] + 0.12])
         pre = move(api, site - 0.08 * n)
         rows.append(
@@ -407,12 +407,19 @@ def exp_grip(args: argparse.Namespace) -> int:
         touched: dict[str, float] = {}
         # 1.5 cm steps to the nominal contact site and up to 4 cm past it: SONIC falls
         # short moving the hand toward the body (as on the robot); contact decides.
-        for step in np.arange(0.015, 0.12 + 1e-9, 0.015):
-            move(api, site - (0.08 - step) * n)
+        if args.fixed_approach:  # like the bottle skill: 2 cm steps to the site, no contact sensing
+            for back in (0.06, 0.04, 0.02, 0.0):
+                move(api, site - back * n, tolerance=0.01)
+            step = 0.08
             time.sleep(0.3)
             touched = truth.touches("aspire_bottle", since, prefix="right_")
-            if touched:
-                break
+        else:
+            for step in np.arange(0.015, 0.12 + 1e-9, 0.015):
+                move(api, site - (0.08 - step) * n)
+                time.sleep(0.3)
+                touched = truth.touches("aspire_bottle", since, prefix="right_")
+                if touched:
+                    break
         if touched and args.past_contact > 0:
             # keep pressing in so the palm, not just the finger base, meets the bottle
             step += args.past_contact
@@ -470,6 +477,24 @@ def exp_grip(args: argparse.Namespace) -> int:
             tolerance=args.hold_tolerance,
         )
         time.sleep(0.5)
+        if args.hold_s > 0:  # hold at the top and watch each finger's contact force
+            holding = time.monotonic()
+            time.sleep(args.hold_s)
+            with truth._lock:
+                samples = [(t, c.get("aspire_bottle", {})) for t, c in truth._contacts if t >= holding]
+            third = max(1, len(samples) // 3)
+            parts = []
+            for link in ("index_1", "middle_1", "thumb_2", "index_0", "middle_0", "wrist_yaw"):
+                name = f"right_{'hand_' if link != 'wrist_yaw' else ''}{link}_link"
+                force = [c.get(name, [0.0])[0] for _, c in samples]
+                lost = next((t - holding for t, c in samples if name not in c), None)
+                early, late = np.mean(force[:third]), np.mean(force[-third:])
+                if early > 0.2 or late > 0.2:
+                    parts.append(
+                        f"{link} {early:.1f}->{late:.1f} N"
+                        + (f" (gone at {lost:.1f} s)" if lost is not None and late < 0.2 else "")
+                    )
+            rows.append(("fingers through the hold", None, ", ".join(parts) or "no contact"))
         lifted = truth.position("aspire_bottle")[2] - start_z
         rows.append(
             ("bottle lifted with the hand", lifted > 0.03, f"bottle rose {lifted * 100:.1f} cm")
@@ -791,6 +816,20 @@ def main() -> int:
     )
     parser.add_argument(
         "--grasp-dz", type=float, default=0.02, help="grip: grasp height above the body center (m)"
+    )
+    parser.add_argument(
+        "--site-dy",
+        type=float,
+        default=0.0,
+        help="grip: shift the site along the palm normal (negative: stop short of the palm)",
+    )
+    parser.add_argument(
+        "--fixed-approach",
+        action="store_true",
+        help="grip: step to the site like the bottle skill instead of stopping at contact",
+    )
+    parser.add_argument(
+        "--hold-s", type=float, default=0.0, help="grip: hold the lifted bottle this long (s)"
     )
     parser.add_argument(
         "--set-down-pause",
