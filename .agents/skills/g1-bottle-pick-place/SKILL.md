@@ -66,9 +66,16 @@ try {
   if (!dg.contact) { await tools.mcp__cap__cap_open_gripper({ arm: "right" }); await move([S[0], S[1] - 0.08, S[2] + 0.12]); done("closed on nothing", true); }
   else {
     const H = close.job.result.terminal_state.end_effector_poses.right;  // put back to this pose
+    // Did the bottle rise? SAM3 sees it with the hand in view (sim: 4.6-5.8 cm for a good 5 cm
+    // lift; 0.4-1.3 cm when an off-center grasp dragged it instead).
+    const height = async () => { try { return (await locate()).c[2]; } catch (e) { return null; } };
+    const zBefore = await height();
     const up = await move([H.position[0], H.position[1], H.position[2] + LIFT_M], H.quaternion_wxyz);
     const top = up.job.result.terminal_state.end_effector_poses.right.position[2];
     report.hand_rise_m = +(top - H.position[2]).toFixed(3);
+    const zAfter = await height();
+    report.bottle_rise_m = zBefore === null || zAfter === null ? null : +(zAfter - zBefore).toFixed(3);
+    const notLifted = report.bottle_rise_m !== null && report.bottle_rise_m < 0.6 * LIFT_M;
     const hs = J(await tools.mcp__cap__cap_g1_real__get_hand_state({}));
     const fingers = (hs.result ?? hs).right;
     report.finger_change_rad = +Math.max(...fingers.map((q, i) => Math.abs(q - dg.hand_q[i]))).toFixed(3);
@@ -87,13 +94,15 @@ try {
       report.offset_m = +Math.hypot(c1[0] - c[0], c1[1] - c[1]).toFixed(3); } catch (e) { report.relocalize = String(e); }
     for (const im of (await tools.mcp__cap__observe({ cameras: ["ego_view", "third_view"] })).content ?? []) if (im.type === "image") image(im);
     if (dropped) done("the bottle slipped out during the lift", true);
+    else if (notLifted) done("the bottle did not rise with the hand (grasp off center)", true);
     else { report.ok = true; done("lifted and put back"); }
   }
 } catch (e) { done(String(e)); }
 ```
 
 The routine uses only registered CAP tools. `REPORT` fields: `close.contact`, `hand_rise_m`
-(the hand's measured rise), `finger_change_rad` (0.15 to 0.45: a finger lost contact but the
+(the hand's measured rise), `bottle_rise_m` (SAM3's measured bottle rise; below 0.6 x `LIFT_M`
+means the bottle was dragged, not lifted; `null` if a localization failed), `finger_change_rad` (0.15 to 0.45: a finger lost contact but the
 bottle stayed; 0.45 and above: it slipped out),
 `hand_open`, `offset_m` (the bottle's estimated distance from its start; SAM3 noise is 2 to 3
 cm), and every move with its error.
