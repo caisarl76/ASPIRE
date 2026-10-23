@@ -570,7 +570,9 @@ approach (no contact, with the torso shift of a second reset; no other session t
 sim), so the grasp was off center and dragged the bottle. Off-center grasps (site 3 cm
 short) against good ones, 3 each, through the CAP server: SAM3 with the hand in view saw the
 bottle rise 4.6-5.8 cm for good 5 cm lifts and 0.4-1.3 cm for the dragged ones. The skill
-now fails a lift whose SAM3 bottle rise is below 0.6 x the requested height.
+now fails a lift whose SAM3 bottle rise is below 0.6 x the requested height. Small-model
+batch with that check, 5 runs: **5/5**, 88-97 s, SAM3 bottle rise 3.9-6.5 cm on every lift
+(no false failures), placement 0.8-2.8 cm.
 
 ### Speed-up experiment on the robot (prepared, not yet run)
 
@@ -581,8 +583,10 @@ back). Prerequisites, all on the robot side:
 1. The head camera at 1280x720 (fork `8ead375` overlaid on PC2, launch command above),
    intrinsics checked.
 2. SAM3's offsets on the real (clear) bottle measured: returned center minus the bottle's
-   axis, in x and z. The skill's routine pushes the center 0.03 m away and grasps 0.03 m
-   below it (sim values); replace both if the robot's differ by more than 1 cm.
+   axis, in x and z. The skill's routine pushes the center `AXIS_PUSH_M` = 0.03 m away and
+   grasps `GRASP_DZ_M` = 0.03 m below it (sim values, constants at the top of the routine in
+   `.agents/skills/g1-bottle-pick-place/SKILL.md`); set the robot's if they differ by more
+   than 1 cm.
 3. Grip squeeze 0.35 checked on the Dex3 (0.25 if it squeezes too hard), and the
    reach-map spot for the bottle: about x 0.36, y -0.06 to -0.12 in the torso frame.
 4. Operator at the e-stop; the bottle on a marked spot so placement can be read off.

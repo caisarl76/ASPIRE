@@ -11,7 +11,8 @@ as one script, so you do not plan moves yourself. Your job is only:
 
 1. After the startup Home, run the routine below **once**, in a single exec call. Change only
    `LIFT_M` (the requested lift height in metres) and `QUERY` if the task names another
-   bottle. Do not edit the geometry.
+   bottle. Do not edit the geometry (`AXIS_PUSH_M` and `GRASP_DZ_M` are set per robot by
+   the operator, not by you).
 2. Read the report it prints (`REPORT {...}`) and look at the two final images.
 3. Decide:
    - `ok: true`, the final `third_view` shows the bottle upright on the case and the hand
@@ -28,6 +29,9 @@ further from its spot. The routine takes about one minute.
 
 ```javascript
 const LIFT_M = 0.05, QUERY = "water bottle";
+// SAM3's center vs the bottle: the axis is AXIS_PUSH_M farther from the robot, and the grasp
+// goes GRASP_DZ_M below the returned center. Sim values; set the robot's measured ones.
+const AXIS_PUSH_M = 0.03, GRASP_DZ_M = 0.03;
 const J = (r) => r.structuredContent ?? JSON.parse((r.content ?? []).find((c) => c.type === "text").text);
 const report = { ok: false, retry: false, steps: [] };
 const done = (reason, retry = false) => { report.reason = reason; report.retry = retry; text("REPORT " + JSON.stringify(report)); };
@@ -49,8 +53,8 @@ async function locate() {
   if (Math.max(ex, ey, ez) > 0.30 || Math.min(ex, ey, ez) > 0.12) throw new Error("implausible bottle box " + g.extents);
   // The returned center is the visible front surface's: push it 3 cm away from the robot to the
   // axis, and grasp 3 cm below it (just under the body center). Site 6 cm ahead, 5.3 cm right.
-  const d = Math.hypot(c[0], c[1]), A = [c[0] + 0.03 * c[0] / d, c[1] + 0.03 * c[1] / d];
-  return { c, S: [A[0] + 0.06, A[1] - 0.053, c[2] - 0.03] };
+  const d = Math.hypot(c[0], c[1]), A = [c[0] + AXIS_PUSH_M * c[0] / d, c[1] + AXIS_PUSH_M * c[1] / d];
+  return { c, S: [A[0] + 0.06, A[1] - 0.053, c[2] - GRASP_DZ_M] };
 }
 try {
   let { c, S } = await locate();
