@@ -565,6 +565,46 @@ tokens (baseline 77k-109k), one close each, placement 0.6-2.7 cm in the successe
 the bottle rose only 1.6 cm and ended 6.4 cm off. It slid down the fingers without the
 fingers closing further, so the finger check (0.09 rad) missed it.
 
+That run's bottle had been re-placed 3.4 cm by an unexplained layout reset during the
+approach (no contact, with the torso shift of a second reset; no other session touched the
+sim), so the grasp was off center and dragged the bottle. Off-center grasps (site 3 cm
+short) against good ones, 3 each, through the CAP server: SAM3 with the hand in view saw the
+bottle rise 4.6-5.8 cm for good 5 cm lifts and 0.4-1.3 cm for the dragged ones. The skill
+now fails a lift whose SAM3 bottle rise is below 0.6 x the requested height.
+
+### Speed-up experiment on the robot (prepared, not yet run)
+
+Goal: compare the agent's wall time and success on g1-222 between the current setup and the
+small model with the scripted skill (sim: 189-237 s against 83-110 s per pick, lift and put
+back). Prerequisites, all on the robot side:
+
+1. The head camera at 1280x720 (fork `8ead375` overlaid on PC2, launch command above),
+   intrinsics checked.
+2. SAM3's offsets on the real (clear) bottle measured: returned center minus the bottle's
+   axis, in x and z. The skill's routine pushes the center 0.03 m away and grasps 0.03 m
+   below it (sim values); replace both if the robot's differ by more than 1 cm.
+3. Grip squeeze 0.35 checked on the Dex3 (0.25 if it squeezes too hard), and the
+   reach-map spot for the bottle: about x 0.36, y -0.06 to -0.12 in the torso frame.
+4. Operator at the e-stop; the bottle on a marked spot so placement can be read off.
+
+Protocol: start the robot's server (`scripts/start_system2.sh --robot 222 --allow-motion
+--engage`), then alternate setups in blocks of 5 trials with
+`scripts/g1_real_agent_trials.py` (the operator places the bottle, presses Enter, and scores
+each trial: lifted at least 3 cm, upright, distance from the mark):
+
+```bash
+.venv-system2/bin/python scripts/g1_real_agent_trials.py --label fast \
+    --model gpt-5.6-luna --effort low --trials 5 --out <dir>
+.venv-system2/bin/python scripts/g1_real_agent_trials.py --label baseline --trials 5 --out <dir>
+```
+
+`baseline` uses `~/.codex/config.toml` (gpt-6-astra, xhigh effort); both use the bottle
+skill, which the G1 tool guide now points to, so the difference is the model. Each trial
+records wall time, tool calls, tokens, the skill's `REPORT` lines (finger change, SAM3
+bottle rise, placement estimate) and the operator's scores in `<dir>/<label>/`. Run one
+supervised `fast` trial first and stop on any surprise (a refusal, the hand near the case
+edge, a tipped bottle).
+
 ### Sim2sim (SONIC MuJoCo loop)
 
 Run on the workstation on 2026-10-18 (headless: the MuJoCo viewer on an Xvfb
