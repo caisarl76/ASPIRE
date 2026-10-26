@@ -73,12 +73,16 @@ def locate(api) -> tuple[np.ndarray | None, str]:
     pts = r.point_cloud.points
     lo, hi = np.percentile(pts, 2, axis=0), np.percentile(pts, 98, axis=0)
     across, tall = float(max(hi[:2] - lo[:2])), float(hi[2] - lo[2])
+    center = np.asarray(r.geometry.pose.position, float)
+    # A standing 500 ml bottle's body center is ~10.5 cm above its base (the cloud's
+    # bottom); the difference is SAM3's z offset (sim: +1.7 cm).
     detail = (
-        f"score {r.segmentation.score:.2f}, {across * 100:.0f} cm across, {tall * 100:.0f} cm tall"
+        f"score {r.segmentation.score:.2f}, {across * 100:.0f} cm across, {tall * 100:.0f} cm tall, "
+        f"center {(center[2] - lo[2]) * 100:.1f} cm above the cloud's bottom"
     )
     if across > 0.12 or tall > 0.30:
         return None, f"rejected box ({detail})"
-    return np.asarray(r.geometry.pose.position, float), detail
+    return center, detail
 
 
 def ask(question: str, kind: str) -> bool:
