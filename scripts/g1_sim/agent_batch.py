@@ -111,6 +111,8 @@ def run_once(
     duration = time.monotonic() - started
     watch.terminate()  # every line is flushed as it is written
     watch.wait(timeout=10)
+    if "Selected model is at capacity" in (run / "agent.log").read_text(errors="replace"):
+        return {"run": index, "error": "model at capacity"}
     result = {"run": index, "duration_s": round(duration), "timed_out": timed_out}
     result.update(score(run / "watch.jsonl", run / "agent.log", max_placement_m))
     (run / "result.json").write_text(json.dumps(result, indent=2))

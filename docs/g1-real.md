@@ -587,6 +587,13 @@ one drop in 4 short-approach runs against none for the shared close. With the sc
 skill's grasp geometry the small model had 0 falls in 20 runs; the slip check flagged a
 finger losing contact in 4 of them, each time with the bottle still held and put back.
 
+Big model with the scripted skill (default gpt-6-astra, xhigh; 10 valid runs, 3 more
+refused at startup with "Selected model is at capacity", which `agent_batch.py` now counts
+as infrastructure failures): **10/10**, no falls, 104-169 s (median 134), 37k-115k tokens,
+every run the skill's 24 tool calls. Bottle rise 3.8-6.7 cm, upright through every run
+(min 0.974), placement 1.1-2.6 cm. So the skill's grasp geometry, not the model, removes the
+index-finger falls; with the skill the small model is about 40 s faster for the same result.
+
 ### Speed-up experiment on the robot (prepared, not yet run)
 
 Goal: compare the agent's wall time and success on g1-222 between the current setup and the
