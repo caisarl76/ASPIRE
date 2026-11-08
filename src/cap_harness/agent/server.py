@@ -152,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-video", action="store_true")
     parser.add_argument("--sam3-url")
     parser.add_argument("--curobo-url")
+    parser.add_argument("--graspgenx-url", help="GraspGenX ZMQ server, e.g. tcp://127.0.0.1:5586")
     args = parser.parse_args(argv)
     g1 = args.benchmark == "g1_real"
     if args.engage and not args.allow_motion:
@@ -225,6 +226,10 @@ def main(argv: list[str] | None = None) -> int:
             options["ik_providers"]["curobo"] = planner
             options["trajectory_planning_providers"] = {"curobo": planner}
             options["integrated_pose_planning_providers"] = {"curobo-integrated": planner}
+        if args.graspgenx_url:
+            from cap_harness.providers.graspgenx import GraspGenXProvider
+
+            options["grasp_providers"] = {"graspgenx": GraspGenXProvider(args.graspgenx_url)}
         adapter, runtime = build_runtime(
             env,
             adapter_type=adapter_type,

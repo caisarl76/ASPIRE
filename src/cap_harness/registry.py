@@ -26,6 +26,7 @@ SHARED_PUBLIC_TOOL_NAMES = frozenset(
         "move_synchronized",
         "open_gripper",
         "plan_motion",
+        "plan_grasps",
         "plan_synchronized_motion",
         "segment_points",
         "segment_text",

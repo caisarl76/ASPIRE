@@ -910,6 +910,31 @@ def test_generate_grasps_projects_mask_into_robot_base_frame() -> None:
     assert result.grasps[0].frame == "base"
 
 
+def test_plan_grasps_projects_mask_onto_the_frame_it_was_segmented_from() -> None:
+    api = CapApi(  # type: ignore[arg-type]
+        FakeAdapter(),
+        grasp_providers={"contact-graspnet": FakeGraspProvider()},
+    )
+    seen: list[object] = []
+    segmentation = Segmentation(
+        mask=np.ones((2, 2), dtype=bool), label="cube", score=1.0, camera_name="agentview", frame="camera"
+    )
+
+    def segment(name: str, query: str, observation: object) -> SegmentationSet:
+        seen.append(observation)
+        return SegmentationSet(ok=True, segmentations=(segmentation,))
+
+    def project(mask: object, **kwargs: object) -> PointCloud:
+        seen.append(kwargs["observation"])
+        return PointCloud(points=np.zeros((4, 3)), frame="base")
+
+    api._segment_text = segment  # type: ignore[method-assign]
+    api._project_mask = project  # type: ignore[method-assign]
+
+    assert api.plan_grasps("cube").ok
+    assert len(seen) == 3 and all(observation is seen[0] for observation in seen)
+
+
 def test_move_to_joints_reissues_target_until_observed_state_converges() -> None:
     class LaggingAdapter(FakeAdapter):
         def step(self, action: object) -> StepResult:

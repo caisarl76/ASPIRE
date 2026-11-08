@@ -197,6 +197,7 @@ _DIRECT_BASE = frozenset(
     {
         "get_robot_state",
         "localize_object",
+        "plan_grasps",
         "move_to_joints",
         "move_to_pose",
         "move_synchronized",
@@ -205,7 +206,7 @@ _DIRECT_BASE = frozenset(
         "close_gripper",
     }
 )
-_READ_ONLY_BASE = frozenset({"get_robot_state", "localize_object"})
+_READ_ONLY_BASE = frozenset({"get_robot_state", "localize_object", "plan_grasps"})
 _DIRECT_EXTENSIONS = (
     ".get_controller_metadata",
     ".set_hand_joints",
@@ -252,6 +253,8 @@ class CapMcpBridge:
         }
         if not configured["segmentation"]:
             allowed.discard("localize_object")
+        if not configured["segmentation"] or not configured["grasping"]:
+            allowed.discard("plan_grasps")
         if not configured["ik"] and not configured["pose_planning"]:
             allowed.discard("move_to_pose")
         self._default_ik = next(iter(configured["ik"]), "pyroki")
