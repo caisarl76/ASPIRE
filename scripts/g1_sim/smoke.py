@@ -164,7 +164,7 @@ async def run(args: argparse.Namespace) -> list[tuple[str, str, str]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mcp-port", type=int, default=8223)
-    parser.add_argument("--camera-port", type=int, default=5565)
+    parser.add_argument("--camera-port", type=int, default=5575)
     args = parser.parse_args()
     rows = asyncio.run(run(args))
     width = max(len(name) for name, _, _ in rows)
