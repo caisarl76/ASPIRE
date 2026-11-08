@@ -153,6 +153,7 @@ class CapApi:
         """Describe configured backends; this is not a service health check."""
         return {
             "segmentation": self._segmentation_provider is not None,
+            "grasping": tuple(self._grasp_providers),
             "ik": tuple(self._ik_providers),
             "trajectory_planning": tuple(self._trajectory_planning_providers),
             "pose_planning": tuple(self._integrated_pose_planning_providers),
@@ -312,6 +313,13 @@ class CapApi:
         backend: str = "contact-graspnet",
         max_candidates: int = 5,
     ) -> GraspSet:
+        return self._grasps_from_mask(
+            camera_name, mask, self.get_observation(camera_name), backend, max_candidates
+        )
+
+    def _grasps_from_mask(self, camera_name, mask, observation, backend, max_candidates):
+        # The mask must be projected onto the depth image it was segmented from: a G1's
+        # body moves during segmentation, so a fresh frame puts the mask beside the object.
         provider = self._grasp_providers.get(backend)
         if provider is None:
             return GraspSet(
@@ -322,7 +330,6 @@ class CapApi:
                     details={"backend": backend},
                 ),
             )
-        observation = self.get_observation(camera_name)
         camera = observation.cameras[camera_name]
         if isinstance(mask, Segmentation):
             segmentation = mask
@@ -1186,6 +1193,32 @@ class CapApi:
             point_cloud=point_cloud,
         )
 
+    def plan_grasps(
+        self,
+        query: str,
+        *,
+        camera_name: str | None = None,
+        backend: str | None = None,
+        max_candidates: int = 5,
+    ) -> GraspSet:
+        """Segment ``query`` and return scored grasps for it in the robot base frame.
+
+        ``backend`` defaults to the first configured grasp provider. Each candidate pose is
+        a target for the arm's IK frame, so it can go to ``move_to_pose`` as is.
+        """
+        name = camera_name or self.default_camera
+        observation = self.get_observation()
+        segmentation_set = self._stage("segment_text", self._segment_text, name, query, observation)
+        if not segmentation_set.ok:
+            return GraspSet(ok=False, error=segmentation_set.error)
+        return self._grasps_from_mask(
+            name,
+            segmentation_set.segmentations[0],
+            observation,
+            backend or next(iter(self._grasp_providers), "contact-graspnet"),
+            max_candidates,
+        )
+
     def select_grasp(
         self,
         grasps: GraspSet,
@@ -1644,6 +1677,7 @@ class CapApi:
             "set_gripper": ("shared_atomic", "control"),
             "set_grippers": ("shared_atomic", "control"),
             "localize_object": ("shared_high_level", "perception"),
+            "plan_grasps": ("shared_high_level", "grasping"),
             "select_grasp": ("shared_high_level", "grasping"),
             "move_to_joints": ("shared_high_level", "execution"),
             "move_to_pose": ("shared_high_level", "execution"),
