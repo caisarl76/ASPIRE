@@ -286,33 +286,61 @@ intrinsics in the PC2 camera format, starts the SONIC deploy, and with `smoke` a
 sim CAP server and a check list:
 
 ```bash
-scripts/g1_sim.sh smoke          # up, engage, drop, checks, down (--keep leaves it running)
-scripts/g1_sim.sh up             # or by hand: sim + deploy only
+scripts/g1_sim.sh smoke          # the whole startup below, checks, down (--keep leaves it running)
+scripts/g1_sim.sh up             # or by hand: sim (robot hanging on the band) + deploy only
 scripts/start_system2.sh --robot sim --allow-motion --engage --sam3-url http://192.168.75.174:8114
-scripts/g1_sim.sh drop           # drop the robot onto its feet once SONIC holds it
-scripts/g1_sim.sh reset          # lay the case and bottle out in front of it (after drop)
+scripts/g1_sim.sh drop           # the viewer's '9': the band off, once SONIC is in CONTROL
+scripts/g1_sim.sh stand          # the viewer's backspace, repeated until the robot settles
+scripts/g1_sim.sh reset          # lay the case and bottle out in front of it (after stand)
 scripts/start_system2_agent.sh --robot sim --allow-motion
 scripts/g1_sim.sh down
 ```
 
-Startup is feet-down (after dimos-dev-84's `startup_on_floor`): the robot starts in
-SONIC's default pose with the soles on the floor, a joint PD holds that pose until the
-deploy's first command, the band holds the pelvis where it stands instead of hanging it at
-1 m, and `drop` fades the band out over 2 s. Measured on fresh `smoke` runs against the old
-hanging start: in the 10 s after release the torso tilted at most 2.7-12 deg (was 40),
-moved 2.5-4.3 cm (was 20 cm) and turned 0.2-1.1 deg (was 74); settled tilt 1.6-2.4 deg
-(was 4.2). While held, the torso still leans about 30 deg forward for the ~5 s the
-deploy tracks its `reference/example/` clip before its planner starts; avoiding that
-needs the deploy to start in planner idle (the fork is left unmodified).
+Startup follows the fork's viewer (2026-11-06; it replaces the earlier feet-down start).
+The robot hangs on the elastic band while SONIC starts. 4 s after the deploy reaches
+CONTROL, `drop` turns the band off. Once both soles are down and the pelvis is still,
+`stand` runs `mj_resetData`: the robot is back at qpos0, straight on the floor, and SONIC
+(which is not told) bends it into its stance. `scripts/g1_sim/settled.py` then requires
+both soles down, pelvis tilt under 3 deg and pelvis height within 1.5 cm of 0.786 m, held
+for 2 s. A stance that misses gets another backspace, up to 3. The case and the bottle are
+parked 20 m behind the robot in the model (so `mj_resetData` parks them too) and appear
+only on `reset`, after the robot has settled. A swinging arm can no longer hit them: the
+empty-hand close in `smoke` reports `closed_empty` 1.0 (it was `contact` 0.42-0.52, on
+the case). In 20 fresh startups, 16 settled on the first stand. The other 4 stood at the
+right height but still tilted 3.4-5.5 deg after all 3 stands.
+
+**The sim must keep up with real time.** SONIC's deploy runs on the wall clock at 50 Hz,
+and the sim only as fast as the CPU allows. Below about 0.8x real time the robot loses
+balance, even standing still. Measured 2026-11-08 on a standing robot (no planning, no
+arm motion):
+
+| Extra CPU load (busy processes) | Sim speed (x real time) | Falls in 20 s |
+|---|---|---|
+| none | 0.87 | 0 |
+| 4 | 0.73 | 8 |
+| 8 | 0.57 | 12 |
+| 12-16 | 0.50-0.52 | 12-16 |
+| load removed | 0.83 | 23 |
+
+After a fall, the fork's own fall check (pelvis below 0.2 m) runs `mj_resetData` without
+telling SONIC, so the robot falls again within half a second, 10-20 times in a row, and the
+case and the bottle are parked 20 m away. In a trial this shows up as SAM3 finding no
+bottle and the bottle ending about 2000 cm from where it stood. Rendering three 1280x720
+views inside the physics loop held the sim to 0.57-0.70x. `sim_rgbd.py` now renders in
+its own thread from a snapshot (0.87-0.99x when unloaded). GraspGenX planning still adds
+about 4 cores, and with a busy browser on the 16-core workstation the sim fell to 0.45x
+and the robot fell in all 3 recorded trials. Every camera message carries `sim_time` in
+`sim_truth`; check that it advances at about 1.0x real time before trusting a batch.
 
 The sim lives in `scripts/g1_sim/sim_rgbd.py`, which runs the fork's simulator with its
 own Python and leaves the fork unchanged: it swaps the scene at load (case, bottle, and
 `head_camera` moved to the real D435 pose and field of view, so the `g1-sim` profile
 shares the real camera transform), renders on the GPU through EGL, and toggles the
 elastic band on a signal instead of the viewer's `9`. It uses its own ports (camera
-5565, command 5566, feedback 5567, MCP 8223, viewer 8083) and can run next to a
-real-robot server. Each camera message also carries `sim_truth`, the objects' torso-frame
-positions, which `scripts/g1_sim/smoke.py` checks localization against.
+5575, command 5566, feedback 5567, MCP 8223, viewer 8083) and can run next to a
+real-robot server or lerobot's `sonic_policy_server.py` (5565). Each camera message
+also carries `sim_truth`, the objects' torso-frame positions, which
+`scripts/g1_sim/smoke.py` checks localization against.
 
 Result (2026-10-21): all seven checks pass (camera RGB-D and intrinsics, station, Home,
 right hand 5 cm up at 8 mm, Dex3 close on nothing and open, SAM3 localizes the bottle
@@ -628,6 +656,152 @@ records wall time, tool calls, tokens, the skill's `REPORT` lines (finger change
 bottle rise, placement estimate) and the operator's scores in `<dir>/<label>/`. Run one
 supervised `fast` trial first and stop on any surprise (a refusal, the hand near the case
 edge, a tipped bottle).
+
+### Grasp generation: the bottle recipe against GraspGenX
+
+How the G1 picks its grasp today (bottle skill and recipe):
+
+1. `localize_object`: SAM3 text mask on the ego RGB image, projected with depth into a
+   torso-frame cloud; `estimate_geometry` gives a box center and extents.
+2. Hand-written geometry: push the center 3 cm away from the robot (SAM3 sees only the
+   front surface), grasp 3 cm below it, site S = axis + (0.06, -0.053), with the hand level
+   (quaternion 1 0 0 0 in torso: palm facing +y, thumb behind, fingers ahead), approached
+   along +y in 2 cm steps.
+3. Contact-stepped close plus a 0.35 squeeze.
+
+It assumes an upright cylinder reached from the right, and its offsets are per robot
+(`AXIS_PUSH_M`, `GRASP_DZ_M`). Results: 10/10 (big model) and 14/15 (small model) in sim,
+reach 10/10 and lift 8/10 on g1-222.
+
+[GraspGenX](https://github.com/NVlabs/GraspGenX) (NVlabs, CVPR 2026) is one diffusion model
+for any gripper. It is conditioned per request on the gripper's swept volume: two boxes in
+the gripper frame G (+Z approach, +X closing), open and half-open. Given a segmented object
+cloud it returns K SE(3) gripper poses with discriminator scores. Its default GraspMoE
+planner merges diffusion samples with oriented-box grasps. It ships a `unitree_g1`
+description, which is the right Dex3-1 hand (`revolute_3f`), and its own ZMQ server and
+MCP bridge. Code is Apache-2.0; the weights are under the NVIDIA Open Model License.
+
+| | Bottle recipe | GraspGenX |
+|---|---|---|
+| Grasp pose | one site from hand-tuned offsets | K scored 6-DoF poses |
+| Orientation | fixed level side grasp | chosen per object (side, top, oblique) |
+| Objects | upright cylinders | any segmented object |
+| Partial view | 3 cm push corrects the front-surface bias | trained on partial clouds |
+| Fingers | contact-stepped close | open/close only (same close afterwards) |
+| Reach, waist turn, approach | built in (+y staging, put back to H) | not modelled: filter by IK, add a pre-grasp |
+| Support collisions | none needed (side grasp) | not filtered in params mode |
+
+Integration:
+
+- `GraspGenXProvider` (`cap_harness.providers.graspgenx`) speaks the server's `infer_object`
+  wire format.
+- `DEX3_RIGHT` holds the Dex3's swept volume, measured from `g1_full_body.xml` against
+  `right_grasp_site`, so a candidate is a `move_to_pose` target as is:
+  - open: 10 x 6 x 6 cm at 5 cm from the palm;
+  - half-open: 4 x 6 x 5 cm;
+  - Z = site +y and X = site x.
+
+  These agree with the shipped `unitree_g1` boxes to about 1 cm. Where G sits relative to
+  the site was measured, not taken from the boxes. Over 60 candidates checked against the
+  sim's true bottle, G came a median 8.3 cm (p10-p90 6.6-9.7) behind the bottle's axis
+  along the approach and 3.7 cm short of it along the closing axis. The site is therefore
+  3.0 cm ahead of G and 9.7 cm along its closing axis, which puts the palm 5.3 cm from the
+  axis, as in the bottle skill.
+- The swept volume is symmetric under a half turn about G +Z; the Dex3 is not (the thumb
+  is on one side). About half the candidates came back with the thumb outward, the
+  cluster about 9 cm off. `Hand.closing_dir` turns each candidate's +X toward the
+  fingers-forward side.
+- The level side grasp G (Z = torso +y, X = torso x) maps to the skill's quaternion
+  1 0 0 0 (`tests/test_graspgenx_client.py`).
+- `plan_grasps(query)` segments the query, then runs the grasp provider. It is a read-only
+  MCP tool, exposed only when a segmenter and a grasp provider are configured.
+- To enable it, start the server, then point the CAP server at it:
+
+  ```bash
+  # Workstation layout: code in ~/work/GraspGenX; venv, weights and gripper descriptions
+  # on /mnt/data/jihun/GraspGenX (the system SSD is short of space). ~/work/GraspGenX/.venv
+  # links to /mnt/data/jihun/GraspGenX/.venv, built with
+  # UV_CACHE_DIR=/mnt/data/jihun/uv-cache UV_PROJECT_ENVIRONMENT=/mnt/data/jihun/GraspGenX/.venv \
+  #   uv sync --python 3.11 --extra serve
+  # Python 3.11 because spconv has no newer wheels. A clone without git-lfs gets 135-byte
+  # pointer files instead of weights, so point the env vars at the real ones.
+  cd ~/work/GraspGenX
+  W=/mnt/data/jihun/GraspGenX
+  GRASPGENX_CHECKPOINT_DIR=$W/graspgenx_checkpoints GRASPGENX_GRIPPER_CFG_DIR=$W/gripper_descriptions \
+  CUDA_VISIBLE_DEVICES=1 .venv/bin/python client-server/graspgenx_server.py \
+      --config $W/graspgenx_checkpoints/release --assets_dir assets --port 5586  # not 5556: the G1 command port
+  GRASPGENX_URL=tcp://127.0.0.1:5586 scripts/g1_sim.sh smoke --keep   # or, for a robot:
+  scripts/start_system2.sh --robot 222 --allow-motion --graspgenx-url tcp://127.0.0.1:5586
+  ```
+
+First sim trials (`scripts/g1_sim/graspgenx_check.py`), with the top reachable candidate
+executed (pre-grasp 8 cm back, then in by 4/2/0 cm, the skill's close):
+
+- **No lift in 4 trials:**
+  - 3 closed on nothing.
+  - 1 knocked the bottle off the case (params mode filters no scene collisions).
+  - 1 touched the bottle but did not lift it.
+- **Speed:** a request takes 0.4 s with the diffusion planner and 5 s with GraspMoE.
+- **Standoff:** the model puts the palm 9-11 cm from the bottle's axis, whatever box depth it
+  is given. The Dex3 needs about 5 cm, hence the 5 cm calibration in `DEX3_RIGHT`.
+- **Approach directions:**
+  - The best-scored candidates come diagonally from the front right (approach about
+    (0.7, 0.7, 0)) or from the left.
+  - In one trial the right arm reached only the sixth candidate.
+- **With the approach filter:** `DEX3_RIGHT` now keeps only candidates whose approach is
+  within 30 degrees of +y (19-24 of 416 per request). 1 lift in 5 trials:
+  - 1 lifted the bottle 4.4 cm and put it back upright, 4.7 cm from where it stood.
+  - 3 knocked it over (one off the case), 2 of them after the fingers touched it.
+  - 1 closed on nothing.
+  - The kept candidates still come in up to 27 degrees forward of +y, and their sites sit
+    about 5 cm nearer the robot than the skill's.
+- **With re-localization:** those trials ran the grasp planned at Home, but SONIC turns the
+  torso as the arm reaches, so torso-frame targets drift. The check now re-localizes the
+  bottle at the pre-grasp (4 cm above a point 8 cm back; the skill's 12 cm rise is out of reach
+  for these higher grasps) and shifts the grasp by how far the bottle moved (0.4 to 3.1 cm).
+  In 5 trials, 2 lifts and none knocked over:
+  - 2 lifted the bottle (6.1 and 4.6 cm of the 5 cm lift) and put it back upright, 3.8 and
+    5.1 cm from where it stood.
+  - 1 lifted it 3.0 cm (it slipped), 1 touched it and dragged it (0.5 cm rise).
+  - 1 got no grasps: SAM3's mask covered about 345k points, and GraspGenX's outlier removal
+    builds an N by N distance matrix (477 GB).
+  - The first 1 to 3 candidates were often unreachable (IK or the wrist's joint limit).
+- **Open:**
+  - Filter by IK before ranking.
+  - Approach until contact, not to a fixed site.
+  - Fine-tune on Dex3 grasps from the sim; the paper reports GraspGenX works as an
+    initialization for that.
+- **Explained later:** `localize_object` disagreed with `plan_grasps` by up to 23 cm in
+  some trials. `plan_grasps` projected the SAM3 mask onto a newer depth frame than the one
+  it was segmented from, and the G1's body moves in between. It now projects onto the same
+  frame (`tests/test_api.py`).
+- **After the half-turn fix and the depth calibration** (2026-11-06/08), most failures
+  were the robot falling, not the grasp. In a 9-trial batch with a fresh gated startup per
+  trial, 2 trials lifted the bottle (4.7 and 5.2 cm; the second tipped it on the
+  put-back). 6 of the other 7 involved a fall, which the sim's real-time problem above
+  explains. Rerun once the sim keeps up with real time.
+- **SAM3 re-localization:** the separate `localize_object` at Home that serves as the
+  re-localization reference sometimes picks the wrong region (scores 0.01-0.04, boxes on
+  the image edge) while the plan's own mask is good. The reference should come from the
+  plan's segmentation.
+
+Other open-source grasp generators, for dexterous and humanoid hands:
+
+| Method | Output | Hands | Dex3 fit | License |
+|---|---|---|---|---|
+| [GraspGenX](https://github.com/NVlabs/GraspGenX) | wrist pose, open/close | any, zero-shot from a swept volume | ships `unitree_g1` | Apache-2.0 code, NVIDIA model license |
+| [Dexonomy](https://github.com/JYChen18/Dexonomy) + [DexLearn](https://github.com/JYChen18/DexLearn) (RSS 2025) | wrist pose + finger joints, all grasp types | Shadow, Allegro, Leap, MANO, Unitree G1 | G1 hand supported for synthesis; learned checkpoints are Shadow | CC BY-NC 4.0 |
+| [D(R,O) Grasp](https://github.com/zhenyuwei2003/DRO-Grasp) (ICRA 2025) | wrist pose + finger joints | Barrett, Allegro, Shadow; new hands via URDF | needs Dex3 grasp data to train | MIT |
+| [BODex](https://pku-epic.github.io/BODex) (ICRA 2025) | grasp synthesis, GPU optimisation | Shadow, Allegro, Leap | dataset generator only | see project page |
+| [DexGraspNet 2.0](https://arxiv.org/abs/2410.23004) (CoRL 2024) | dexterous grasps in clutter from one depth view | LEAP (90.7 % real) | retrain per hand | see repo |
+| [AnyDexGrasp](https://github.com/graspnet/AnyDexGrasp) (2025) | learned from real trials | Allegro, DH3, Inspire | per-hand data collection | CC BY-NC 4.0 |
+| [MachaGrasp](https://arxiv.org/abs/2510.06068) (2025) | finger joints given object cloud and wrist pose | cross-embodiment | could add fingers on top of a GraspGenX wrist pose | see project page |
+| [CrossDex](https://github.com/PKU-RL/CrossDex) (ICLR 2025) | RL grasp policy | cross-embodiment | policy, not a generator; RL code unreleased | see repo |
+| Contact-GraspNet (already a provider here) | wrist pose | parallel jaw | no | see submodule |
+
+GraspGenX is the only one that runs zero-shot on the Dex3, with a permissive code licence
+and its own server. Dexonomy is the closest for full finger postures on the G1 hand, but
+its licence is non-commercial and its learned models need Dex3 training.
 
 ### Sim2sim (SONIC MuJoCo loop)
 

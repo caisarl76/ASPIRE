@@ -6,12 +6,14 @@ does this):
     MUJOCO_GL=egl <fork>/.venv_sim/bin/python <aspire>/scripts/g1_sim/sim_rgbd.py
 
 The fork is not modified: this script builds the fork's simulator, swaps the scene model
-at load time and replaces its render hook. Headless (no viewer): the robot starts
-standing on its feet, held where it stands by the elastic band (the fork's band hangs it
-at 1 m, and SONIC started there flails and then falls when dropped). SIGUSR1 releases the
-band, fading it out over ``BAND_FADE_S``, or re-attaches it where the pelvis is
-(``kill -USR1 $(cat <pid-file>)``); SIGUSR2 re-places the case and the bottle in front of
-the robot as it stands now, the bottle upright.
+at load time and replaces its render hook. Headless (no viewer), started the way the fork's
+viewer is used: the robot hangs on the elastic band (pelvis at 1 m) while SONIC starts;
+SIGUSR1 is the viewer's '9' and drops it (sets the band off; '9' itself toggles);
+SIGRTMIN is the viewer's backspace, ``mj_resetData``: the robot stands straight-legged
+on the floor at qpos0 and SONIC, which is not told, bends it into its stance (the case and
+the bottle go back to their model poses, parked ``PARK_DX`` behind it). SIGUSR2 places the
+case and the bottle in front of the robot as it stands now, the bottle upright
+(``kill -USR2 $(cat <pid-file>)``); they start parked, so they appear only then.
 
 The head camera is moved to the real D435 mounting and field of view (the transform comes
 from the g1-lab station profile), so the g1-sim profile shares the real camera transform.
@@ -21,7 +23,8 @@ image-only ``third_view`` from a fixed camera ahead and to the right of the robo
 message also carries ``sim_truth`` for checking runs; ASPIRE ignores it: object positions
 in the torso frame, and per object the robot links that touched it since the previous
 message as ``[peak normal force, x, y, z]`` with the contact point in the link's frame
-(contacts are collected on every physics step).
+(contacts are collected on every physics step), and ``sim_time``. Frames are rendered in
+their own thread from a snapshot, so rendering never holds physics back from real time.
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ import os
 from pathlib import Path
 import signal
 import tempfile
+import threading
 import time
 import types
 
@@ -54,15 +58,9 @@ MAX_DEPTH_M = 4.0  # beyond this the RealSense reports no return
 # top is at torso height with its near face 0.30 m ahead, and a 500 ml bottle on it.
 CASE_NEAR_X, CASE_DEPTH, CASE_Y = 0.30, 0.40, (-0.25, 0.20)
 BOTTLE_XY = (0.36, -0.06)
-BAND_FADE_S = 2.0  # the band fades out over this long on release (no free fall)
-HOLD_KP, HOLD_KD = 100.0, 5.0  # the joint hold before the deploy's first command
-# The deploy's default_angles (policy_parameters.hpp), body joints in motor order
-SONIC_DEFAULT = np.array(
-    [-0.312, 0, 0, 0.669, -0.363, 0] * 2
-    + [0.0] * 3
-    + [0.2, 0.2, 0.0, 0.6, 0.0, 0.0, 0.0]
-    + [0.2, -0.2, 0.0, 0.6, 0.0, 0.0, 0.0]
-)
+# The model (and so mj_resetData) keeps the case and the bottle this far behind the robot:
+# they appear only when placed, after SONIC's startup, so a swinging arm cannot hit them.
+PARK_DX = -20.0
 # A fixed third-person camera ahead and to the right, aimed at the bottle area
 # (published as image-only `third_view`): eye and target, torso frame.
 THIRD_EYE, THIRD_TARGET, THIRD_FOVY = (0.95, -0.75, 0.40), (0.40, -0.08, 0.02), 60.0
@@ -151,7 +149,7 @@ def _add_objects(spec: mujoco.MjSpec) -> None:
     case = world.add_body(
         name="aspire_case",
         mocap=True,
-        pos=[*ahead(CASE_NEAR_X + CASE_DEPTH / 2, sum(CASE_Y) / 2), tz / 2],
+        pos=[*ahead(PARK_DX + CASE_NEAR_X + CASE_DEPTH / 2, sum(CASE_Y) / 2), tz / 2],
         quat=upright,
     )
     case.add_geom(
@@ -166,7 +164,7 @@ def _add_objects(spec: mujoco.MjSpec) -> None:
     )
     rig.add_camera(name="aspire_third_view", fovy=THIRD_FOVY)
     bottle = world.add_body(
-        name="aspire_bottle", pos=[*ahead(*BOTTLE_XY), tz + 0.075], quat=upright
+        name="aspire_bottle", pos=[*ahead(PARK_DX + BOTTLE_XY[0], BOTTLE_XY[1]), tz + 0.075], quat=upright
     )
     bottle.add_freejoint(name="aspire_bottle_free")
     clear = [0.78, 0.88, 0.96, 1.0]
@@ -237,6 +235,11 @@ class RgbdPublisher:
         self._sock.setsockopt(zmq.SNDHWM, 3)
         self._sock.bind(f"tcp://*:{port}")
         self._rgb = self._depth = None
+        # Rendering three 1280x720 views inline held physics to ~0.65x real time, and SONIC,
+        # on the wall clock, lost its balance; the physics thread now only snapshots.
+        self._latest: tuple | None = None
+        self._ready = threading.Condition()
+        self._snapshot: mujoco.MjData | None = None
         focal = REAL_FY_PX  # the field of view above is derived from it
         self._intrinsics = {
             "fx": focal, "fy": focal, "ppx": WIDTH / 2.0, "ppy": HEIGHT / 2.0,
@@ -246,9 +249,15 @@ class RgbdPublisher:
         self._third_intrinsics = {**self._intrinsics, "fx": third_focal, "fy": third_focal}
 
     reset_requested = False
+    robot_reset_requested = False
     band_on = staticmethod(lambda: None)  # set once the simulator exists
 
     def publish(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
+        if self.robot_reset_requested:  # the viewer's backspace, in the simulation thread
+            self.robot_reset_requested = False
+            mujoco.mj_resetData(model, data)
+            mujoco.mj_forward(model, data)
+            print("[g1-sim] robot reset to qpos0 (straight, on the floor)", flush=True)
         if self.reset_requested:  # applied here, in the simulation thread
             self.reset_requested = False
             bottle_xy = BOTTLE_XY
@@ -257,6 +266,33 @@ class RgbdPublisher:
                     json.loads(self._layout_file.read_text()).get("bottle_xy", BOTTLE_XY)
                 )
             _place_objects(model, data, bottle_xy)
+        truth = {
+            **_truth(model, data),
+            "contacts": self._contacts.drain(),
+            "band": self.band_on(),
+            "sim_time": round(float(data.time), 4),
+        }
+        with self._ready:  # the render thread takes the newest; an unrendered one is dropped
+            self._latest = (data.qpos.copy(), data.mocap_pos.copy(), data.mocap_quat.copy(), truth, time.time())
+            self._ready.notify()
+        if self._snapshot is None:
+            self._snapshot = mujoco.MjData(model)
+            threading.Thread(target=self._render_loop, args=(model,), daemon=True).start()
+
+    def _render_loop(self, model: mujoco.MjModel) -> None:
+        data = self._snapshot
+        while True:
+            with self._ready:
+                self._ready.wait_for(lambda: self._latest is not None)
+                (data.qpos[:], data.mocap_pos[:], data.mocap_quat[:], truth, stamp), self._latest = (
+                    self._latest,
+                    None,
+                )
+            mujoco.mj_kinematics(model, data)
+            mujoco.mj_camlight(model, data)
+            self._render(model, data, truth, stamp)
+
+    def _render(self, model: mujoco.MjModel, data: mujoco.MjData, truth: dict, stamp: float) -> None:
         if self._rgb is None:  # GL contexts belong to the rendering thread
             self._rgb = mujoco.Renderer(model, HEIGHT, WIDTH)
             self._depth = mujoco.Renderer(model, HEIGHT, WIDTH)
@@ -271,18 +307,14 @@ class RgbdPublisher:
             third = self._rgb.render()
         depth_mm = np.where(depth < MAX_DEPTH_M, np.round(depth * 1000.0), 0).astype(np.uint16)
         message = {
-            "timestamps": {"ego_view": time.time()},
+            "timestamps": {"ego_view": stamp},
             "images": {
                 "ego_view": rgb,
                 "ego_view_depth": depth_mm,
                 **({"third_view": third} if third is not None else {}),
             },
             "intrinsics": {"ego_view": self._intrinsics, "third_view": self._third_intrinsics},
-            "sim_truth": {
-                **_truth(model, data),
-                "contacts": self._contacts.drain(),
-                "band": self.band_on(),
-            },
+            "sim_truth": truth,
         }
         self._sock.send(msgpack.packb(message, default=msgpack_numpy.encode, use_bin_type=True))
 
@@ -342,6 +374,17 @@ def _truth(model: mujoco.MjModel, data: mujoco.MjData) -> dict[str, list[float]]
     roll = math.degrees(math.atan2(rotation[2, 1], rotation[2, 2]))
     yaw = math.degrees(math.atan2(rotation[1, 0], rotation[0, 0]))
     truth["torso_world"] = [*origin.round(4).tolist(), round(pitch, 2), round(roll, 2), round(yaw, 2)]
+    # settled = upright pelvis at its standing height with both soles on the floor
+    pelvis = model.body("pelvis").id
+    truth["pelvis_z"] = round(float(data.xpos[pelvis][2]), 4)
+    truth["pelvis_tilt_deg"] = round(math.degrees(math.acos(float(np.clip(data.xmat[pelvis][8], -1, 1)))), 2)
+    feet = [model.body(f"{side}_ankle_roll_link").id for side in ("left", "right")]
+    on_floor = [False, False]
+    for contact in data.contact[: data.ncon]:
+        bodies = {int(model.geom_bodyid[contact.geom1]), int(model.geom_bodyid[contact.geom2])}
+        for i, foot in enumerate(feet):
+            on_floor[i] |= bodies == {0, foot}
+    truth["feet_on_floor"] = on_floor
     return truth
 
 
@@ -393,53 +436,6 @@ def main() -> None:
 
         bridge.ElasticBand.Advance = advance_toward_start
 
-    # Feet-down start: the band holds the pelvis where it is (qpos0 stands on the floor)
-    # instead of pulling it to the fork's fixed point 1 m up, and a release fades it out.
-    from gear_sonic.utils.mujoco_sim import unitree_sdk2py_bridge as bridge
-
-    advance_band = bridge.ElasticBand.Advance
-
-    def advance_held(band: object, pose: np.ndarray) -> np.ndarray:
-        if getattr(band, "anchor", True):  # first use, or re-attached
-            band.point, band.anchor = np.array(pose[:3], dtype=float), False
-        scale = 1.0
-        released = getattr(band, "released_at", None)
-        if released is not None:
-            scale = max(0.0, 1.0 - (time.monotonic() - released) / BAND_FADE_S)
-            if scale == 0.0:
-                band.enable, band.released_at = False, None
-        return scale * advance_band(band, pose)
-
-    bridge.ElasticBand.Advance = advance_held
-
-    # Until the deploy's first command the joints get no torque and the torso slumps 30 deg
-    # on the band, which SONIC's start then swings out; a band holding the straight-legged
-    # qpos0 height also tips it 30 deg once the knees bend. So start in SONIC's default
-    # pose with the soles on the floor and hold it with a joint PD until that command.
-    torques = base_sim.DefaultEnv.compute_body_torques
-
-    def hold_until_commanded(env: object) -> np.ndarray:
-        low = env.unitree_bridge
-        if low is None or low.low_cmd_received:
-            return torques(env)
-        model, data = env.mj_model, env.mj_data
-        q = [env.body_joint_index[i] + env.qpos_offset - 1 for i in range(env.num_body_dof)]
-        dq = [env.body_joint_index[i] + env.qvel_offset - 1 for i in range(env.num_body_dof)]
-        if not getattr(env, "aspire_posed", False):  # once: default pose, soles down
-            ankle = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "left_ankle_roll_link")
-            before = data.xpos[ankle, 2]
-            data.qpos[q] = SONIC_DEFAULT
-            mujoco.mj_forward(model, data)
-            data.qpos[2] -= data.xpos[ankle, 2] - before
-            data.qvel[:] = 0.0
-            mujoco.mj_forward(model, data)
-            env.aspire_posed = True
-            if getattr(env, "elastic_band", None) is not None:
-                env.elastic_band.anchor = True  # hold the pelvis at its new height
-        return HOLD_KP * (SONIC_DEFAULT - data.qpos[q]) - HOLD_KD * data.qvel[dq]
-
-    base_sim.DefaultEnv.compute_body_torques = hold_until_commanded
-
     contacts = ContactLog()
     step = base_sim.DefaultEnv.sim_step
 
@@ -468,27 +464,26 @@ def main() -> None:
         getattr(getattr(sim.sim_env, "elastic_band", None), "enable", False)
     )
 
-    def toggle_band(*_: object) -> None:
+    def drop(*_: object) -> None:
         band = getattr(sim.sim_env, "elastic_band", None)
-        if band is None:
-            return
-        if band.enable and getattr(band, "released_at", None) is None:
-            band.released_at = time.monotonic()
-            print(f"[g1-sim] elastic band fading out over {BAND_FADE_S:.0f} s", flush=True)
-        else:  # off or fading: hold the robot where it is now
-            band.enable, band.released_at, band.anchor = True, None, True
-            print("[g1-sim] elastic band on, holding the pelvis where it is", flush=True)
+        if band is not None:
+            band.enable = False
+            print("[g1-sim] elastic band off", flush=True)
+
+    def reset_robot(*_: object) -> None:
+        publisher.robot_reset_requested = True
 
     def reset_bottle(*_: object) -> None:
         publisher.reset_requested = True
 
-    signal.signal(signal.SIGUSR1, toggle_band)
+    signal.signal(signal.SIGUSR1, drop)
     signal.signal(signal.SIGUSR2, reset_bottle)
+    signal.signal(signal.SIGRTMIN, reset_robot)
     if args.pid_file:
         args.pid_file.write_text(str(os.getpid()))
     print(
-        f"[g1-sim] running; RGB-D on tcp://*:{args.port}; SIGUSR1 toggles the band, "
-        "SIGUSR2 resets the bottle",
+        f"[g1-sim] running; RGB-D on tcp://*:{args.port}; SIGUSR1 drops the robot, "
+        "SIGRTMIN resets it standing, SIGUSR2 places the case and the bottle",
         flush=True,
     )
     SimulatorFactory.start_simulator(sim, as_thread=False, enable_image_publish=False)

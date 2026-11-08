@@ -1,8 +1,9 @@
 schema_version: 1
 station: g1-sim
 # SONIC MuJoCo sim on this workstation (scripts/g1_sim.sh): Dex3 hands, the real head
-# camera pose, a case and a bottle. Its own ports (camera 5565, command 5566,
-# feedback 5567) so it never meets a real-robot server on 5555-5557.
+# camera pose, a case and a bottle. Its own ports (camera 5575, command 5566,
+# feedback 5567) so it never meets a real-robot server on 5555-5557 (or lerobot's
+# sonic_policy_server, which binds 5565).
 base_frame: torso
 default_arm: right
 arm_aliases:
@@ -87,7 +88,7 @@ controller:
 camera:
   role: ego_view
   host: 127.0.0.1
-  port: 5565
+  port: 5575
   depth_scale_m: 0.001
   max_acquisition_elapsed_s: 0.5
   # Drop the floor from depth: the dominant level plane among points more than

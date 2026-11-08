@@ -803,7 +803,7 @@ def main() -> int:
     )
     parser.add_argument("--seconds", type=float, default=3600.0, help="watch: stop after this long")
     parser.add_argument("--summary", action="store_true", help="watch: only summarize --out")
-    parser.add_argument("--camera-port", type=int, default=5565)
+    parser.add_argument("--camera-port", type=int, default=5575)
     parser.add_argument("--curobo-url", default="http://192.168.75.174:8118")
     parser.add_argument(
         "--legacy-heading", action="store_true", help="heading: use the pre-fix facing"

@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
 # SONIC MuJoCo sim of the G1 for ASPIRE, on this workstation.
 #
-#   scripts/g1_sim.sh up      start the sim (headless, RGB-D on 5565) and the SONIC deploy
-#                             (command 5566, feedback 5567); waits for both
-#   scripts/g1_sim.sh drop    release the elastic band (fades out over 2 s; run after engage);
-#                             again re-attaches it where the pelvis is
+#   scripts/g1_sim.sh up      start the sim (headless, RGB-D on 5575, the robot hanging on
+#                             the elastic band) and the SONIC deploy (command 5566, feedback
+#                             5567); waits for both
+#   scripts/g1_sim.sh drop    the viewer's '9': the band off, the robot falls to the floor
+#   scripts/g1_sim.sh stand   the viewer's backspace: the robot back to qpos0, standing
+#                             straight on the floor; repeated (up to 3) until it settles
+#                             (scripts/g1_sim/settled.py: both soles down, tilt < 3 deg)
 #   scripts/g1_sim.sh reset [X Y]
 #                             place the case and the bottle in front of the robot as it
-#                             stands now (do this after drop; it steps when it lands);
-#                             X Y puts the bottle there in the torso frame (default 0.36 -0.06)
+#                             stands now; X Y puts the bottle there in the torso frame
+#                             (default 0.36 -0.06)
 #   scripts/g1_sim.sh status  sessions, ports, last log lines
 #   scripts/g1_sim.sh down    stop everything this script started
 #   scripts/g1_sim.sh smoke [--keep]
 #                             up, a CAP server (--robot sim, engaged), drop, the checks in
 #                             scripts/g1_sim/smoke.py, then down (unless --keep)
 #
-# Then, for an agent session: scripts/start_system2.sh --robot sim --allow-motion --engage
-# (MCP 8223, viewer 8083), scripts/g1_sim.sh drop, scripts/start_system2_agent.sh --robot sim
-# --allow-motion. The sim ports never overlap a real-robot server (5555-5557, 8222).
+# Deployment order, as with the fork's viewer: hang, start SONIC (engage), drop, stand,
+# settle, then objects. For an agent session: scripts/start_system2.sh --robot sim
+# --allow-motion --engage (MCP 8223, viewer 8083), scripts/g1_sim.sh drop, stand, reset,
+# then scripts/start_system2_agent.sh --robot sim --allow-motion. The sim ports never
+# overlap a real-robot server (5555-5557, 8222).
 # Overrides: GR00T_WBC_ROOT, TensorRT_ROOT, G1_SIM_CHECKPOINT (sonic_v1_1 or release),
 # G1_SIM_YAW_DEG (the robot's initial heading).
 set -euo pipefail
@@ -27,7 +32,7 @@ TRT_ROOT="${TensorRT_ROOT:-$HOME/TensorRT/TensorRT-10.13.0.35}"
 CHECKPOINT="${G1_SIM_CHECKPOINT:-sonic_v1_1}"
 RUN_DIR="${G1_SIM_RUN_DIR:-/tmp/${USER:-aspire}/aspire-g1-sim}"
 SIM=aspire-g1sim DEPLOY=aspire-g1sim-deploy CAP=aspire-g1sim-cap
-CAMERA_PORT=5565 COMMAND_PORT=5566 FEEDBACK_PORT=5567 MCP_PORT=8223
+CAMERA_PORT=5575 COMMAND_PORT=5566 FEEDBACK_PORT=5567 MCP_PORT=8223
 # tmux sessions inherit its server's environment; a snap terminal's EGL vendor dirs hide
 # NVIDIA's EGL and ROS's libddsc breaks the sim's CycloneDDS.
 CLEAN_ENV="env -u __EGL_VENDOR_LIBRARY_DIRS -u LD_LIBRARY_PATH"
@@ -95,24 +100,39 @@ status() {
   return 0
 }
 
+settled() { env -u PYTHONPATH "$ASPIRE_ROOT/.venv-system2/bin/python" "$ASPIRE_ROOT/scripts/g1_sim/settled.py" "$@"; }
+
+stand() {  # backspace, then the settle gate; a stance that misses it gets another backspace
+  local try
+  for try in 1 2 3; do
+    sim_signal RTMIN
+    sleep 1
+    settled --timeout 15 && return 0
+  done
+  return 1
+}
+
 smoke() {
   local keep=0
   [[ "${1:-}" == "--keep" ]] && keep=1
-  # its drop toggles the band: on a sim whose robot already stands it would re-attach it
+  # the deployment order needs a hanging robot, i.e. a fresh sim
   ! running "$SIM" || { printf 'sim already up; run %s down first\n' "$0" >&2; exit 1; }
   up
   local providers=()
   if curl --noproxy '*' -sf -m 3 http://192.168.75.174:8114/healthz >/dev/null; then
     providers+=(--sam3-url http://192.168.75.174:8114)
   fi
+  [[ -z "${GRASPGENX_URL:-}" ]] || providers+=(--graspgenx-url "$GRASPGENX_URL")
   ! port_bound "$MCP_PORT" || { printf 'port %s is in use\n' "$MCP_PORT" >&2; exit 1; }
   tmux new-session -d -s "$CAP" "cd '$ASPIRE_ROOT' && exec scripts/start_system2.sh --robot sim \
 --allow-motion --engage --no-viser ${providers[*]} > '$RUN_DIR/cap.log' 2>&1"
   wait_for 120 "the sim CAP server on $MCP_PORT" curl --noproxy '*' -sf -m 2 "http://127.0.0.1:$MCP_PORT/health" -o /dev/null
-  sleep 3
-  sim_signal USR1  # drop the robot onto its feet now that SONIC holds it
-  sleep 10          # it steps to catch itself; let it settle
-  sim_signal USR2   # then lay the case and the bottle out in front of it
+  wait_for 30 "SONIC's CONTROL state" grep -qs "transitioning to CONTROL" "$RUN_DIR/deploy.log"
+  sleep 4
+  sim_signal USR1    # '9': drop the hanging robot
+  settled --landed --timeout 10 || true   # let it land before the reset
+  stand || printf 'robot did not settle after 3 stands\n' >&2
+  sim_signal USR2    # then lay the case and the bottle out in front of it
   sleep 2
   local status=0
   env -u PYTHONPATH "$ASPIRE_ROOT/.venv-system2/bin/python" "$ASPIRE_ROOT/scripts/g1_sim/smoke.py" \
@@ -124,6 +144,7 @@ smoke() {
 case "${1:-}" in
   up) up ;;
   drop) sim_signal USR1 ;;
+  stand) stand ;;
   reset)
     if (($# == 3)); then printf '{"bottle_xy": [%s, %s]}\n' "$2" "$3" > "$RUN_DIR/layout.json"
     else rm -f "$RUN_DIR/layout.json"; fi
@@ -131,5 +152,5 @@ case "${1:-}" in
   down) down ;;
   status) status ;;
   smoke) shift; smoke "$@" ;;
-  *) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
