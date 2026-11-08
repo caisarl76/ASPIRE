@@ -17,7 +17,7 @@ have not been run; fill in the result placeholders when you do.
 | SONIC feedback PUB `g1_debug` | PC2 `unitree@192.168.0.223` | 5557 | ASPIRE SUB |
 | Composed camera PUB (RGB + aligned depth) | PC2 | 5555 | ASPIRE SUB |
 | SAM3 | `192.168.75.174` (`h100_174`), GPU 3, Docker container `jihun-aspire-sam3-174-gpu3-261020` | 8114 | ASPIRE HTTP |
-| cuRobo | `192.168.75.174` (`h100_174`), GPU 2, Docker container `jihun-aspire-curobo-174-gpu2-261020` | 8118 | ASPIRE HTTP |
+| cuRobo | `192.168.75.174` (`h100_174`), GPU 4, Docker container `jihun-aspire-curobo-174-gpu4-261106` | 8118 | ASPIRE HTTP |
 | CAP MCP / Viser | `.62` | 8222 / 8080 | agent / operator |
 
 SAM3 runs from `docker/sam3.Dockerfile` (image `jihun-aspire-sam3:<commit>`, built
@@ -621,6 +621,55 @@ as infrastructure failures): **10/10**, no falls, 104-169 s (median 134), 37k-11
 every run the skill's 24 tool calls. Bottle rise 3.8-6.7 cm, upright through every run
 (min 0.974), placement 1.1-2.6 cm. So the skill's grasp geometry, not the model, removes the
 index-finger falls; with the skill the small model is about 40 s faster for the same result.
+
+### Reach check on the robot (`scripts/g1_reach_check.py`)
+
+A scripted grasp at fixed cells on g1-222, without the agent. It builds the station itself,
+so no CAP server may hold the command port.
+
+1. SAM3 locates the object. The operator moves it onto the cell until it is within 2 cm.
+2. The right hand goes to a waypoint beside the case, where the wrist turns to the grasp
+   orientation, and then to a pre-contact pose 8 cm short of the grasp site.
+3. The hand approaches in 1.5 cm steps with an 8 mm tolerance, so the correction rounds
+   remove SONIC's tracking offset. It stops once the measured hand reaches the site.
+4. Contact-aware Dex3 close (0.35 squeeze past contact), a 5 cm lift with a SAM3 rise
+   check, then it puts the object down, releases and retreats.
+5. When the hand hides the object, the operator answers y/n. Each attempt appends one
+   line to a local JSONL log.
+
+A browser viewer (`--viz-port`, default 8082) shows the live camera, the SAM3 mask, the
+grasp site, the target and the measured hand, and the log. After a crash or Ctrl-C the
+keep-alive holds the last commanded pose. Enter then goes Home and glides to SONIC's idle
+arms, so SONIC's own drop after the stream stops has nothing left to move. Home's retreat
+gives every waypoint at least the time its largest joint change needs at
+`plan_max_joint_velocity_rad_s`.
+
+```bash
+PYTHONPATH= VIRTUAL_ENV= .venv-system2/bin/python scripts/g1_reach_check.py --object apple --attempts 1
+# --site-dx-cm / --site-dy-cm shift the grasp site; --sim rehearses on g1-sim
+```
+
+Results on g1-222 (2026-11-05/06, squeeze 0.35):
+
+| Object and grasp | Attempts | Reach | Close at contact | Lifted | Back in place |
+|---|---|---|---|---|---|
+| Bottle, level side grasp, 4 cm approach tolerance | 6 | 4/6 | 4/6 | 4/6 | 5/6 |
+| Bottle, level side grasp, 8 mm approach tolerance | 10 | 10/10 | 10/10 | 8/10 | 10/10 |
+| Apple, top grasp from teleop `pnp_table` #52 (site 1.6 cm left, down-and-right approach) | 2 | 2/2 | 0/2 | 0/2 | 1/2 |
+| Apple, same orientation, site 1.5 cm right of center, straight-down approach | 4 | 4/4 | 1/4 | 0/4 | 3/4 |
+
+The apple grasps miss by a few cm: the fingers close on nothing or slip off. SONIC turns the
+torso, and with it the head camera and the torso frame, as the right arm reaches. A 10 deg
+turn moves an object at x 0.45 by about 7.6 cm in the torso frame.
+
+**Not yet run (2026-11-08):** the reach check now carries each localized object through
+posture changes. It tracks the torso pose as the pelvis IMU orientation times the waist
+FK, and holds the pelvis position fixed. It localizes the object again at the hover.
+`--measure` grasps nothing: it reports the SAM3 spread, the torso turn from Home to the
+hover, SAM3 at the hover against the carried estimate, the hand's tracking error, and the
+operator's hand correction, and it prints suggested `--site-dx-cm` / `--site-dy-cm`. A sim
+rehearsal on 11-08 gave nothing usable: under heavy CPU load the sim ran below real time
+and the robot fell before the reach.
 
 ### Speed-up experiment on the robot (prepared, not yet run)
 

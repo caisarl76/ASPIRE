@@ -625,8 +625,23 @@ class G1Env:
         }
         n = len(rows["left"])
         step_s = RETREAT_STEP_M / RETREAT_SPEED_M_S
-        timestamps = [i * step_s for i in range(n - 1)]
-        timestamps.append((timestamps[-1] if timestamps else 0.0) + max(0.0, float(duration_s)))
+        q = np.concatenate([np.asarray(rows["left"]), np.asarray(rows["right"])], axis=1)
+        # Each row also gets the time its largest joint change needs at the plan speed
+        # limit, as planned moves do: a wrist turn or a high reach moves a joint up to
+        # 0.6 rad per 2 cm waypoint, and a retreat cut short by IK left 2.4 rad for the
+        # final 3 s, both at the step clamp (fake plant, from the apple grasp).
+        vmax = self.config.controller.plan_max_joint_velocity_rad_s
+        prev = np.concatenate(codec.arms_from_upper_body(self.last_command()[0])[1:])
+        need = [
+            float(np.max(np.abs(q[i] - (q[i - 1] if i else prev)))) / vmax if vmax else 0.0
+            for i in range(n)
+        ]
+        timestamps = [0.0]
+        for i in range(1, n):
+            gap = step_s if i < n - 1 else max(0.0, float(duration_s))
+            timestamps.append(timestamps[-1] + max(gap, need[i]))
+        if n == 1:
+            timestamps = [max(0.0, float(duration_s), need[0])]
         batch = YamActionBatch.joint_abs(
             timestamps,
             rows["left"],
@@ -638,7 +653,7 @@ class G1Env:
         )
         # The retreat's first row is the chain itself; without one the single
         # home row is reached over the start interpolation, as before.
-        start_s = step_s if n > 1 else max(0.0, float(duration_s))
+        start_s = step_s if n > 1 else timestamps[0]
         result = self.execute_action_batch(batch, start_interp_s=start_s, settle_s=0.2)
         if isinstance(result, dict):
             result["retreat_waypoints"] = int(len(retreat))

@@ -155,14 +155,18 @@ class ComposedCameraRgbd:
         while not self._stop.is_set():
             if not self._sock.poll(_POLL_MS):
                 continue
+            raw = self._sock.recv()
             try:
-                msg = msgpack.unpackb(
-                    self._sock.recv(), object_hook=msgpack_numpy.decode, raw=False
-                )
+                msg = msgpack.unpackb(raw, object_hook=msgpack_numpy.decode, raw=False)
                 frame, depth_missing, intrinsics_missing = self._assemble(msg, time.monotonic())
             except Exception as exc:
-                # A bad message is dropped; the previous good frame stays.
-                logger.warning("dropping undecodable camera message: %r", exc)
+                # A bad message is dropped; the previous good frame stays. The exception's
+                # repr can hold the whole payload (msgpack's ExtraData), so log its type once.
+                self._warn_once(
+                    f"undecodable_{type(exc).__name__}",
+                    f"dropping undecodable messages ({type(exc).__name__}, {len(raw)} bytes, "
+                    f"starts {raw[:16]!r}); is another camera server on this port?",
+                )
                 continue
             aux = self._assemble_aux(msg, frame.timestamp_s)
             with self._lock:
