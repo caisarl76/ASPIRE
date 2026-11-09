@@ -31,11 +31,12 @@ def main() -> int:
     sock.setsockopt(zmq.CONFLATE, 1)
     sock.setsockopt(zmq.RCVTIMEO, 1000)
     sock.connect(f"tcp://127.0.0.1:{args.port}")
-    deadline, since, last_z, truth = time.monotonic() + args.timeout, None, None, {}
+    deadline, since, last_z, truth, held = time.monotonic() + args.timeout, None, None, {}, False
     while time.monotonic() < deadline:
         try:
             truth = msgpack.unpackb(sock.recv(), object_hook=msgpack_numpy.decode, raw=False)["sim_truth"]
-        except zmq.Again:
+        except zmq.Again:  # a telemetry gap is no evidence of a hold: start over
+            since = last_z = None
             continue
         z, tilt = truth["pelvis_z"], truth["pelvis_tilt_deg"]
         ok = all(truth["feet_on_floor"]) and last_z is not None and abs(z - last_z) < STILL_M
@@ -44,10 +45,11 @@ def main() -> int:
         last_z = z
         since = (since or time.monotonic()) if ok else None
         if since and time.monotonic() - since >= args.hold:
+            held = True  # this fresh sample qualifies and closes the hold
             break
         time.sleep(0.1)
+    ok = held
     status = "landed" if args.landed else "settled"
-    ok = since is not None and time.monotonic() - since >= args.hold
     print(f"{status if ok else 'not ' + status}: pelvis {truth.get('pelvis_z')} m, tilt "
           f"{truth.get('pelvis_tilt_deg')} deg, feet {truth.get('feet_on_floor')}", flush=True)
     return 0 if ok else 1

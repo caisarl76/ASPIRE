@@ -225,6 +225,17 @@ class ContactLog:
         return touches
 
 
+def merge_touches(older: dict, newer: dict) -> dict:
+    """Both drains' touches in one, each link keeping its peak force (and where it was)."""
+    merged = {obj: dict(links) for obj, links in older.items()}
+    for obj, links in newer.items():
+        peak = merged.setdefault(obj, {})
+        for link, touch in links.items():
+            if touch[0] >= peak.get(link, (0.0,))[0]:
+                peak[link] = touch
+    return merged
+
+
 class RgbdPublisher:
     """Renders the head camera (RGB and depth) and publishes ASPIRE's camera schema."""
 
@@ -273,6 +284,8 @@ class RgbdPublisher:
             "sim_time": round(float(data.time), 4),
         }
         with self._ready:  # the render thread takes the newest; an unrendered one is dropped
+            if self._latest is not None:  # but its contacts ride on to the next published frame
+                truth["contacts"] = merge_touches(self._latest[3]["contacts"], truth["contacts"])
             self._latest = (data.qpos.copy(), data.mocap_pos.copy(), data.mocap_quat.copy(), truth, time.time())
             self._ready.notify()
         if self._snapshot is None:

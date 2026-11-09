@@ -37,6 +37,9 @@ from cap_harness.errors import ApiError, ErrorCode
 from cap_harness.geometry import matrix_to_pose
 
 DEFAULT_GRASPGENX_URL = "tcp://127.0.0.1:5586"
+# The server's outlier removal builds an N x N distance matrix before the model resamples
+# to its 3500 points: a 345k-point SAM3 mask asked for 477 GB. 8192 points is ~270 MB.
+MAX_POINTS = 8192
 
 
 @dataclass(frozen=True)
@@ -87,8 +90,10 @@ class GraspGenXProvider:
         planner: str = "graspmoe",
         num_grasps: int = 200,
         timeout_s: float = 30.0,
+        max_points: int = MAX_POINTS,
     ) -> None:
         self.url, self.hand, self.planner = url, hand, planner
+        self.max_points = int(max_points)
         self.num_grasps, self.timeout_ms = int(num_grasps), int(timeout_s * 1000)
         self._context = zmq.Context.instance()
         self._g_from_site = np.linalg.inv(hand.site_from_g)
@@ -116,11 +121,15 @@ class GraspGenXProvider:
     ) -> GraspSet:
         # ponytail: no scene collision filter (the server skips it in params mode); add one
         # against scene_point_cloud when grasps start hitting the support surface.
+        points = np.asarray(point_cloud.points, dtype=np.float32)
+        if len(points) > self.max_points:  # uniform, seeded: the same cloud gives the same request
+            pick = np.random.default_rng(0).choice(len(points), self.max_points, replace=False)
+            points = points[pick]
         try:
             response = self._request(
                 {
                     "action": "infer_object",
-                    "point_cloud": np.asarray(point_cloud.points, dtype=np.float32),
+                    "point_cloud": points,
                     "sweep_volume_params": self.hand.sweep_volume,
                     "num_grasps": self.num_grasps,
                     "planner": self.planner,
@@ -160,7 +169,12 @@ class GraspGenXProvider:
             )
             for rank, i in enumerate(order)
         ]
-        diagnostics = {"provider": "graspgenx", "generated": len(scores), "in_approach_cone": int(keep.sum())}
+        diagnostics = {
+            "provider": "graspgenx",
+            "points_sent": len(points),
+            "generated": len(scores),
+            "in_approach_cone": int(keep.sum()),
+        }
         return GraspSet(ok=True, grasps=candidates, diagnostics=diagnostics)
 
 

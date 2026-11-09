@@ -131,7 +131,11 @@ smoke() {
   sleep 4
   sim_signal USR1    # '9': drop the hanging robot
   settled --landed --timeout 10 || true   # let it land before the reset
-  stand || printf 'robot did not settle after 3 stands\n' >&2
+  if ! stand; then  # objects laid out before a stance would only get knocked over
+    printf 'robot did not settle after 3 stands; smoke not run\n' >&2
+    ((keep)) || down
+    return 1
+  fi
   sim_signal USR2    # then lay the case and the bottle out in front of it
   sleep 2
   local status=0
