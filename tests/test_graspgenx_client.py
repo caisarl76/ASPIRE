@@ -51,3 +51,25 @@ def test_unreachable_server_is_a_recoverable_timeout() -> None:
     cloud = PointCloud(points=np.zeros((5, 3)), frame="torso")
     result = provider.generate_grasps(cloud)
     assert not result.ok and result.error.code.value in {"timeout", "provider_unavailable"}
+
+
+def test_large_cloud_is_capped_before_sending() -> None:
+    # A broad SAM3 mask (345k points) once made the server's outlier removal ask for 477 GB.
+    socket = zmq.Context.instance().socket(zmq.REP)
+    port = socket.bind_to_random_port("tcp://127.0.0.1")
+    seen: list = []
+    server = threading.Thread(
+        target=_serve_once, args=(socket, np.eye(4)[None], np.array([0.5]), seen)
+    )
+    server.start()
+    points = np.random.default_rng(1).normal(size=(20_000, 3))
+    provider = GraspGenXProvider(f"tcp://127.0.0.1:{port}", timeout_s=5.0, max_points=1000)
+    provider.generate_grasps(PointCloud(points=points, frame="torso"))
+    server.join(5.0)
+    socket.close()
+
+    sent = seen[0]["point_cloud"]
+    assert sent.shape == (1000, 3)
+    assert len(np.unique(sent, axis=0)) == 1000  # no repeats
+    original = {tuple(p) for p in points.astype(np.float32)}
+    assert all(tuple(p) in original for p in sent)  # a subset, not new points
