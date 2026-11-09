@@ -244,7 +244,7 @@ def main() -> int:
             return replace(cfg, sonic=replace(cfg.sonic, hold_heading=False))
 
         ex.load_g1_station_config = load_as_robot
-        TRUTH = ex.SimTruth(5565)
+        TRUTH = ex.SimTruth(5575)
     if args.squeeze is not None:
         adapter_module.GRIP_SQUEEZE = args.squeeze
     print("grip squeeze past contact:", adapter_module.GRIP_SQUEEZE)
